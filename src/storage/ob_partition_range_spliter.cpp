@@ -443,7 +443,7 @@ int ObIndexBlockTreeTraverser::PathNodeCaches::prefetch(const ObMicroIndexInfo &
                                        micro_handle.io_handle_,
                                        &allocator_))) {
     } else if (ObSSTableMicroBlockState::UNKNOWN_STATE == micro_handle.block_state_) {
-      
+
       micro_handle.macro_block_id_ = micro_index_info.get_macro_id();
       micro_handle.block_state_ = ObSSTableMicroBlockState::IN_BLOCK_IO;
       micro_handle.micro_info_.set(micro_index_info.get_block_offset(),

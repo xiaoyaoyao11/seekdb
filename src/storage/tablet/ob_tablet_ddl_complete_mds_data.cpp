@@ -44,7 +44,7 @@ ObTabletDDLCompleteMdsUserData::~ObTabletDDLCompleteMdsUserData()
 bool ObTabletDDLCompleteMdsUserData::is_valid() const
 {
   return (!has_complete_) ||
-         (has_complete_  && table_key_.is_valid() 
+         (has_complete_  && table_key_.is_valid()
                          && is_valid_direct_load(direct_load_type_)
                          && storage_schema_.is_valid() && write_stat_.is_valid());
 }

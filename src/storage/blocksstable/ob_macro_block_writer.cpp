@@ -1606,7 +1606,7 @@ int ObMacroBlockWriter::try_active_flush_macro_block()
         if (OB_UNLIKELY(current_index_ != 0)) {
           STORAGE_LOG(WARN, "unexpected current index", K(ret));
         } else if (OB_FAIL(flush_macro_block(macro_block, false/*is_close_flush*/))) {
-        } 
+        }
       }
     }
   }
@@ -1911,7 +1911,7 @@ int ObMacroBlockWriter::check_write_complete(const MacroBlockId &macro_block_id)
   read_info.io_desc_.set_sys_module_id(ObIOModule::SSTABLE_MACRO_BLOCK_WRITE_IO);
   read_info.io_timeout_ms_ = std::max(GCONF._data_storage_io_timeout / 1000, DEFAULT_IO_WAIT_TIME_MS);
   read_info.macro_block_id_ = macro_block_id;
-  
+
 
   ObStorageObjectHandle read_handle;
   if (OB_ISNULL(io_buf_) && OB_ISNULL(io_buf_ =

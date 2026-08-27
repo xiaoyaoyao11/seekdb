@@ -33,7 +33,7 @@
     <a href="https://discord.gg/74cF8vbNEs">
         <img alt="Join Discord" src="https://img.shields.io/badge/Discord-Join%20Chat-5865F2?logo=discord&style=flat-square" />
     </a>
-    <a href="https://seekdb.ai">
+    <a href="https://docs.seekdb.ai/">
         <img alt="Documentation" src="https://img.shields.io/badge/Docs-seekdb.ai-4285F4?style=flat-square&logo=read-the-docs&logoColor=white" />
     </a>
     <a href="https://deepwiki.com/oceanbase/seekdb">
@@ -44,13 +44,6 @@
     </a>
     <a href="https://www.youtube.com/@OceanBaseDB">
         <img alt="YouTube" src="https://img.shields.io/badge/YouTube-red?logo=youtube">
-    </a>
-<a href="https://inspect.software/software/oceanbase/seekdb"><img src="https://raw.githubusercontent.com/inspect-software/badges/main/v1/o/oceanbase/seekdb.svg" alt="inspect.software score badge for oceanbase/seekdb" /></a>
-</p>
-
-<p align="center">
-    <a href="https://trendshift.io/repositories/15659" target="_blank">
-        <img src="https://trendshift.io/api/badge/repositories/15659" alt="oceanbase%2Fseekdb | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
     </a>
 </p>
 
@@ -123,7 +116,7 @@ read locks — **this is why P99 stays flat under concurrency.**
 > Milvus, and P99 jitter of just 1.1× when concurrency rises (vs ~10×
 > for ES / Milvus on the same workload).**
 
-<sub>Source: [`src/share/change_stream/`](src/share/change_stream/) · [`src/share/vector_index/`](src/share/vector_index/)</sub>
+<sub>Source: [`src/observer/change_stream/`](src/observer/change_stream/) · [`src/observer/vector_index/`](src/observer/vector_index/)</sub>
 
 ### 🌿 Copy-on-Write Sandboxes for Agent Exploration
 
@@ -394,7 +387,6 @@ Before building, please install the required toolchain and dependencies for your
 # Clone the repository
 git clone https://github.com/oceanbase/seekdb.git
 cd seekdb
-source ~/.bashrc
 ./build.sh release --init --make
 mkdir -p ~/seekdb/bin
 cp build_release/src/observer/seekdb ~/seekdb/bin

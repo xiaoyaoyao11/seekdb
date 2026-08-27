@@ -1934,7 +1934,7 @@ int ObTabletTableStore::build_fork_new_table_store_(
   int ret = OB_SUCCESS;
   ObSEArray<ObITable *, OB_DEFAULT_SE_ARRAY_COUNT> batch_tables;
   int64_t inc_base_snapshot_version = -1;
-  
+
   if (OB_FAIL(param.tables_handle_.get_tables(batch_tables))) {
   } else if (OB_FAIL(inner_build_major_tables_(
       allocator,
@@ -1979,7 +1979,7 @@ int ObTabletTableStore::build_fork_minor_tables_(
   ObSEArray<ObITable *, common::MAX_SSTABLE_CNT_IN_STORAGE> dst_minor_tables;
   const SCN &clog_checkpoint_scn = tablet.get_tablet_meta().clog_checkpoint_scn_;
   const int64_t fork_snapshot_version = param.tablet_fork_param_.snapshot_version_;
-  
+
   // 1. Extract src minor sstables from tables_array
   for (int64_t i = 0; OB_SUCC(ret) && i < tables_array.count(); i++) {
     ObITable *src_table = tables_array.at(i);
@@ -2060,7 +2060,7 @@ int ObTabletTableStore::build_fork_minor_tables_(
           K(fork_snapshot_version), K(clog_checkpoint_scn));
     }
   }
-  
+
   return ret;
 }
 

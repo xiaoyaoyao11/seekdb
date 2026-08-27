@@ -207,7 +207,7 @@ int ObDirectLoadMgrUtil::create_tablet_direct_load_mgr(const int64_t execution_i
       ret = OB_ERR_UNEXPECTED;
       LOG_WARN("unexpected err", K(ret));
     } else if (OB_FAIL(direct_load_mgr->create_tablet_direct_load(context_id, execution_id, build_param))) {
-    } 
+    }
 
     if (OB_FAIL(ret)) {
     } else if (OB_ISNULL(ls_service = ::oceanbase::share::server_service<::oceanbase::storage::ObLSService>())) {

@@ -79,7 +79,7 @@ int ObDMLRunningCtx::init(
     LOG_WARN("invalid argument", K(ret), K(store_ctx_),
         K(dml_param_), KP(schema_service));
   } else {
-    
+
     const uint64_t table_id = dml_param_.table_param_->get_data_table().get_table_id();
     const int64_t version = dml_param_.schema_version_;
     const int64_t runtime_schema_version = dml_param_.runtime_schema_version_;

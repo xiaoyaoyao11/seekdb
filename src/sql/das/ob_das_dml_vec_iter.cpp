@@ -628,7 +628,7 @@ int ObHybridVecLogDMLIterator::check_sync_interval(bool &is_sync_interval) const
   int64_t sync_interval_value = 0;
   share::ObVectorIndexParam vec_param;
   const data_plane::ObDmlTableView table_param = das_ctdef_->table_param_.get_data_table();
-  
+
   if (table_param.get_vec_index_param().empty()) {
     // Use default sync mode when vector index param is empty?
     sync_interval_type = ObVectorIndexSyncIntervalType::VSIT_IMMEDIATE;
@@ -809,7 +809,7 @@ int ObEmbeddedVecDMLIterator::check_sync_interval(bool &is_sync_interval) const
   int64_t sync_interval_value = 0;
   share::ObVectorIndexParam vec_param;
   const data_plane::ObDmlTableView table_param = das_ctdef_->table_param_.get_data_table();
-  
+
   if (table_param.get_vec_index_param().empty()) {
     // Use default sync mode when vector index param is empty?
     sync_interval_type = ObVectorIndexSyncIntervalType::VSIT_IMMEDIATE;

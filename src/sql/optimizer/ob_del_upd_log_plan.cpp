@@ -1076,7 +1076,7 @@ int ObDelUpdLogPlan::get_ddl_sample_sort_column_count(int64_t &sample_sort_colum
     LOG_WARN("error unexpected, table item size is not as expected", K(ret), "table_item_size", ins_stmt->get_table_size());
   } else {
     TableItem* table_item = ins_stmt->get_table_item_by_id(ins_stmt->get_insert_table_info().table_id_);
-    
+
     ObSchemaGetterGuard *schema_guard = nullptr;
     const ObTableSchema *table_schema = nullptr;
     if (OB_ISNULL(schema_guard = optimizer_context_.get_schema_guard())) {
@@ -1417,7 +1417,7 @@ int ObDelUpdLogPlan::collect_related_local_index_ids(IndexDMLInfo &primary_dml_i
   int64_t index_tid_array_size = OB_MAX_AUX_TABLE_PER_MAIN_TABLE;
   uint64_t index_tid_array[OB_MAX_AUX_TABLE_PER_MAIN_TABLE];
   ObArray<uint64_t> base_column_ids;
-  
+
   if (OB_ISNULL(stmt) || OB_ISNULL(schema_guard = optimizer_context_.get_schema_guard())) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("schema guard is nullptr", K(ret), K(stmt), K(schema_guard));
@@ -2117,7 +2117,7 @@ int ObDelUpdLogPlan::check_dml_table_write_dependency(
   ObSEArray<uint64_t, 4> read_dependent_tables;
   ObSchemaGetterGuard* schema_guard = optimizer_context_.get_schema_guard();
   ObSQLSessionInfo* session_info = optimizer_context_.get_session_info();
-  
+
   const ObTableSchema *table_schema = nullptr;
   if (OB_ISNULL(schema_guard) || OB_ISNULL(session_info)) {
     ret = OB_ERR_UNEXPECTED;

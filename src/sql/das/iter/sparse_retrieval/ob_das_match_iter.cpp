@@ -218,7 +218,7 @@ int ObDASMatchIter::inner_init(ObDASIterParam &param)
     } else if (FALSE_IT(children_domain_id_exprs_.set_allocator(&myself_allocator_))) {
     } else if (OB_FAIL(children_domain_id_exprs_.init(match_param.children_domain_id_exprs_.count()))) {
     } else if (OB_FAIL(children_domain_id_exprs_.prepare_allocate(match_param.children_domain_id_exprs_.count()))) {
-    } 
+    }
     for (int64_t i = 0; OB_SUCC(ret) && i < match_param.children_relevance_exprs_.count(); ++i) {
       children_relevance_exprs_[i] = match_param.children_relevance_exprs_.at(i);
       children_domain_id_exprs_[i] = match_param.children_domain_id_exprs_.at(i);
@@ -704,7 +704,7 @@ int ObDASMatchIter::project_results(const int64_t count)
     }
   }
 
-  
+
   return ret;
 }
 

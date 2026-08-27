@@ -22,7 +22,7 @@ using namespace oceanbase::common;
 class TestObj
 {
 public:
-  TestObj(int64_t val) : value_(val) { } 
+  TestObj(int64_t val) : value_(val) { }
   TestObj() : value_(0) { }
   ~TestObj() { }
   TestObj &operator=(const TestObj &obj) {

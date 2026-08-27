@@ -695,7 +695,7 @@ int ObAggregateProcessor::HashBasedDistinctExtraResult::init_distinct_set(
   hp_infras_mgr_ = &hp_infras_mgr;
   aggr_info_ = &aggr_info;
   need_rewind_ = need_rewind;
-  
+
   if (!hp_infras_mgr.is_inited()) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("hash part infras group not initialized", K(ret));
@@ -1145,7 +1145,7 @@ void ObAggregateProcessor::HybridHistExtraResult::reuse()
   ExtraResult::reuse();
 }
 
-int ObAggregateProcessor::HybridHistExtraResult::init(const ObAggrInfo &aggr_info, ObEvalCtx &eval_ctx, const bool need_rewind, 
+int ObAggregateProcessor::HybridHistExtraResult::init(const ObAggrInfo &aggr_info, ObEvalCtx &eval_ctx, const bool need_rewind,
     ObIOEventObserver *io_event_observer,
     ObMonitorNode &op_monitor_info)
 {
@@ -1420,7 +1420,7 @@ int ObAggregateProcessor::init()
   distinct_count_ = 0;
   removal_info_.reset();
   (void)0;
-  
+
   group_rows_.set_ctx_id(ObCtxIds::DEFAULT_CTX_ID);
 
   if (OB_ISNULL(eval_ctx_.exec_ctx_.get_my_session())) {
@@ -8355,7 +8355,25 @@ int ObAggregateProcessor::DecIntAggFuncCtx::init(const ObAggrInfo &aggr_info,
 {
   int ret = OB_SUCCESS;
   const int16_t arg_prec = aggr_info.get_first_child_datum_precision();
-  const int16_t res_prec = aggr_info.expr_->datum_meta_.precision_;
+  const int16_t declared_res_prec = aggr_info.expr_->datum_meta_.precision_;
+  // The declared result precision of an aggregate may be inconsistent with the
+  // precision of its physically produced input. E.g. for SUM over EXISTS the
+  // declared precision is inflated from the integer type max at deduce time,
+  // while the materialized partial column of a three-stage aggregation keeps
+  // the small boolean precision, so the declared precision (55) exceeds
+  // arg_prec (26) by more than OB_DECIMAL_LONGLONG_DIGITS. Such metadata drift
+  // only affects the display width: a sum over at most 2^63 input values always
+  // fits into arg_prec + OB_DECIMAL_LONGLONG_DIGITS digits. Clamp the effective
+  // precision into that range instead of failing the whole query.
+  int16_t res_prec = declared_res_prec;
+  if (arg_prec >= 0 && (declared_res_prec < arg_prec
+                        || declared_res_prec - arg_prec > OB_DECIMAL_LONGLONG_DIGITS)) {
+    res_prec = declared_res_prec < arg_prec ? arg_prec
+                                            : arg_prec + OB_DECIMAL_LONGLONG_DIGITS;
+    LOG_WARN("declared aggregate result precision is inconsistent with the input "
+             "precision, clamp it and continue",
+             K(arg_prec), K(declared_res_prec), K(res_prec));
+  }
   const int arg_type = static_cast<int>(get_decimalint_type(arg_prec));
   const int16_t buffer_prec = get_max_decimalint_precision(arg_prec) - arg_prec;
   const bool need_cast = (buffer_prec < MAX_PRECISION_DECIMAL_INT_64) &&

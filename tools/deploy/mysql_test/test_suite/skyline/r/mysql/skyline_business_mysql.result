@@ -137,8 +137,8 @@ Outputs & filters:
        [trade_dispute.multiple], [trade_dispute.gmt_agreement_modified], [trade_dispute.dispute_end_time], [trade_dispute.gmt_timeout], [trade_dispute.timeout_type],
        [trade_dispute.dispute_desc], [trade_dispute.attributes], [trade_dispute.attribute_cc], [trade_dispute.dispute_status], [trade_dispute.goods_status], [trade_dispute.goods_needs],
        [trade_dispute.goods_count], [trade_dispute.advance_status], [trade_dispute.cs_status], [trade_dispute.proof_status], [trade_dispute.step_id], [trade_dispute.gmt_modified],
-       [trade_dispute.dispute_request]), filter([trade_dispute.gmt_create > str_to_date('1969-12-31\n16:01:41.0', '%Y-%m-%d %H:%i:%s')], [trade_dispute.gmt_create 
-      < str_to_date('1969-12-31 16:01:41.0', '%Y-%m-%d\n%H:%i:%s')], [trade_dispute.from_group != 101], [trade_dispute.buyer_id = 100], [trade_dispute.seller_id 
+       [trade_dispute.dispute_request]), filter([trade_dispute.gmt_create > str_to_date('1969-12-31\n16:01:41.0', '%Y-%m-%d %H:%i:%s')], [trade_dispute.gmt_create
+      < str_to_date('1969-12-31 16:01:41.0', '%Y-%m-%d\n%H:%i:%s')], [trade_dispute.from_group != 101], [trade_dispute.buyer_id = 100], [trade_dispute.seller_id
       = 100], [trade_dispute.dispute_type = 100]), rowset=16
       access([trade_dispute.dispute_id], [trade_dispute.buyer_id], [trade_dispute.seller_id], [trade_dispute.dispute_type], [trade_dispute.from_group], 
       [trade_dispute.gmt_create], [trade_dispute.buyer_nick], [trade_dispute.seller_nick], [trade_dispute.biz_order_id], [trade_dispute.pay_order_id], [trade_dispute.biz_type],

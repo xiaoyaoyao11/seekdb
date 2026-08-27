@@ -172,7 +172,7 @@ int ObDDLIndependentDag::schedule_tablet_merge_task()
 
       if (OB_FAIL(mock_start_scn.convert_for_tx(DDL_START_SCN_VAL))) {
       } else if (OB_FAIL(get_tablet_context(tablet_id, tablet_context))) {
-      } 
+      }
       /* create merge task for data tablet*/
       ObDDLTabletMergeDagParamV2 merge_param;
       ObDDLMergePrepareTask *ddl_merge_task = nullptr;
@@ -582,8 +582,8 @@ int ObDDLIndependentDag::init_tablet_merge_task(
   ObDDLMergePrepareTask *ddl_merge_task = nullptr;
   if (OB_FAIL(mock_start_scn.convert_for_tx(DDL_START_SCN_VAL))) {
   } else if (OB_FAIL(get_tablet_context(tablet_id, tablet_context))) {
-  } 
-  
+  }
+
   if (OB_FAIL(ret)) {
   } else {
     if (OB_FAIL(merge_param.init(for_major  /*for major*/,

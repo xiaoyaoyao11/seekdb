@@ -290,7 +290,7 @@ int ObTabletDDLCompleteMdsHelper::record_ddl_complete_arg_to_mds(
   char *buf = nullptr;
   int64_t buf_len = 0;
   int64_t pos = 0;
-  
+
   ObMySQLProxy *sql_proxy = GCTX.sql_proxy_;
   if (OB_UNLIKELY(!complete_arg.is_valid())) {
     ret = OB_INVALID_ARGUMENT;

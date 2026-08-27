@@ -2137,7 +2137,7 @@ int ObTransformPreProcess::add_semantic_vector_dis_params_to_new_expr(ObDMLStmt 
 
     TableItem *table_item = NULL;
     const share::schema::ObTableSchema *data_table_schema = nullptr;
-    
+
     if (OB_ISNULL(table_item = stmt->get_table_item_by_id(raw_chunk_col_ref->get_table_id()))) {
       ret = OB_ERR_UNEXPECTED;
       LOG_WARN("table_item is NULL", K(ret), K(raw_chunk_col_ref->get_table_id()));

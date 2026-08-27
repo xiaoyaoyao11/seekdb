@@ -79,7 +79,7 @@ TEST(TestObHashMap, set)
   EXPECT_EQ(OB_NOT_INIT, hm.set_refactored(key[0], value[0], 0));
 
   hm.create(cal_next_prime(gHashItemNum), ObModIds::OB_HASH_BUCKET);
-  // normal insert 
+  // normal insert
   EXPECT_EQ(OB_SUCCESS, hm.set_refactored(key[0], value[0], 0));
   // insert different bucket keys
   EXPECT_EQ(OB_SUCCESS, hm.set_refactored(key[1], value[1], 0));

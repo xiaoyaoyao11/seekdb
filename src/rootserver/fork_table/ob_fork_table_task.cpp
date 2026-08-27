@@ -100,7 +100,7 @@ int ObForkTableTask::init(
   } else {
     set_gmt_create(ObTimeUtility::current_time());
     task_type_ = ddl_type;
-    
+
     object_id_ = src_table_schema->get_table_id();
     schema_version_ = schema_version;
     task_id_ = task_id;
@@ -109,7 +109,7 @@ int ObForkTableTask::init(
     task_version_ = 1;
     execution_id_ = -1;
     task_status_ = ObDDLTaskStatus::PREPARE;
-    
+
     dst_schema_version_ = schema_version_;
     snapshot_version_ = snapshot_version;
     data_format_version_ = data_format_version;
@@ -140,7 +140,7 @@ int ObForkTableTask::init(const ObDDLTaskRecord &task_record)
                                                      pos))) {
   } else {
     task_type_ = task_record.ddl_type_;
-    
+
     object_id_ = task_record.object_id_;
     target_object_id_ = task_record.target_object_id_;
     schema_version_ = task_record.schema_version_;
@@ -152,7 +152,7 @@ int ObForkTableTask::init(const ObDDLTaskRecord &task_record)
     execution_id_ = task_record.execution_id_;
     ret_code_ = task_record.ret_code_;
     start_time_ = ObTimeUtility::current_time();
-    
+
     dst_schema_version_ = schema_version_;
 
     if (OB_FAIL(init_ddl_task_monitor_info(target_object_id_))) {
@@ -299,7 +299,7 @@ int64_t ObForkTableTask::get_serialize_param_size() const
 int ObForkTableTask::deep_copy_fork_table_arg(const obcall::ObForkTableArg &arg)
 {
   int ret = OB_SUCCESS;
-  
+
   if (OB_FAIL(ob_write_string(allocator_, arg.src_database_name_, fork_table_arg_.src_database_name_))) {
   } else if (OB_FAIL(ob_write_string(allocator_, arg.src_table_name_, fork_table_arg_.src_table_name_))) {
   } else if (OB_FAIL(ob_write_string(allocator_, arg.dst_database_name_, fork_table_arg_.dst_database_name_))) {
@@ -538,7 +538,7 @@ int ObForkTableTask::cleanup_impl()
       ObTableLockOwnerID lock_owner;
       ObMySQLTransaction trans;
       ObTimeoutCtx ctx;
-      
+
       if (OB_FAIL(GCTX.schema_service_->get_runtime_schema_guard(schema_guard))) {
       } else if (OB_FAIL(schema_guard.get_table_schema( object_id_, src_table_schema))) {
       } else if (OB_ISNULL(src_table_schema)) {

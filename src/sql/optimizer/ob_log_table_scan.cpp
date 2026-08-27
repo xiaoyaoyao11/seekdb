@@ -4461,7 +4461,7 @@ int ObLogTableScan::check_das_need_scan_with_domain_id()
   ObSqlSchemaGuard *schema_guard = nullptr;
   const ObTableSchema *table_schema = nullptr;
   ObSQLSessionInfo *session = NULL;
-  
+
   with_domain_types_.reset();
   domain_table_ids_.reset();
   ObOptimizerContext *opt_ctx = nullptr;

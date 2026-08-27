@@ -176,7 +176,7 @@ TEST_F(TestCharset, sortkey)
   size1 = ObCharset::sortkey(CS_TYPE_UTF8MB4_GENERAL_CI, invalid, strlen(invalid), aa1, 10, is_valid_unicode);
   ASSERT_EQ(size1, 2);
   ASSERT_FALSE(is_valid_unicode);
-  
+
   const char ascii_string[] = {'\x7f','\0'};
   const char non_ascii_string[] = {'\xff','\0'};
   const char utf8_string[] = { '\xe4', '\xbd', '\xa0', '\xe5', '\xa5', '\xbd','\0'}; // Chinese greeting in UTF-8
@@ -442,7 +442,7 @@ TEST_F(TestCharset, toupper)
   fprintf(stdout, "ret:%p, %d\n", y1.ptr(), y1.length() );
   for (int cs_i = CHARSET_INVALID; cs_i < CHARSET_MAX; ++cs_i) {
     auto charset_type = static_cast<ObCharsetType>(cs_i);
-    if (!ObCharset::is_valid_charset(charset_type) || CHARSET_UTF16 == charset_type 
+    if (!ObCharset::is_valid_charset(charset_type) || CHARSET_UTF16 == charset_type
     || CHARSET_UTF16LE == charset_type || CHARSET_BINARY == charset_type)
       continue;
     ObCollationType cs_type = ObCharset::get_default_collation(charset_type);
@@ -729,7 +729,7 @@ TEST_F(TestCharset, foreach_char) {
     int64_t skip_word_cnt = word_cnt;
     ASSERT_EQ(skip_word_cnt, raw_word_cnt);
   }
-  
+
   ObCollationType test_cs_type_;
   auto test_decode = [&test_cs_type_] (const ObString &str, ob_wc_t wchar) -> int {
     int ret = OB_SUCCESS;
@@ -741,7 +741,7 @@ TEST_F(TestCharset, foreach_char) {
     }
     return ret;
   };
-  
+
   for (int i = CHARSET_BINARY + 1; i < CHARSET_MAX; i++) {
     ObCharsetType test_cs_type = static_cast<ObCharsetType>(i);
     if (!ObCharset::is_valid_charset(test_cs_type)) {
@@ -751,10 +751,10 @@ TEST_F(TestCharset, foreach_char) {
     test_cs_type_ = test_collation_type;
     ObString data_out;
     ASSERT_TRUE(ObCharset::is_valid_collation(test_collation_type));
-    
-    
+
+
     fprintf(stdout, "\n# For charset(decode): %s\n", ObCharset::charset_name(test_collation_type));
-    
+
     if(ObCharset::get_charset(test_collation_type)->mbmaxlen == 1) { // latin1, ascii, tis620, dec8
       ASSERT_EQ(OB_SUCCESS, ObCharset::charset_convert(alloc, data_in_ascii, CS_TYPE_UTF8MB4_BIN, test_collation_type, data_out));
     } else if (test_cs_type == CHARSET_BIG5 || test_cs_type == CHARSET_HKSCS || test_cs_type == CHARSET_HKSCS31) { // traditional chinese
@@ -771,7 +771,7 @@ TEST_F(TestCharset, foreach_char) {
     } else { // simplify chinese
       ASSERT_EQ(OB_SUCCESS, ObCharset::charset_convert(alloc, data_in, CS_TYPE_UTF8MB4_BIN, test_collation_type, data_out));
     }
-    
+
     ASSERT_EQ(OB_SUCCESS, ObFastStringScanner::foreach_char(data_out, test_cs_type, test_decode));
   }
 }

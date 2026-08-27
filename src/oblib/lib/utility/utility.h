@@ -47,10 +47,6 @@ inline int usleep(useconds_t usec) {
 #include "lib/allocator/ob_malloc.h"
 #include "lib/time/ob_clock_generator.h"
 
-#ifdef __APPLE__
-#include <sys/types.h>  // includes BSD type definitions
-using uint = unsigned int;
-#endif
 #define FALSE_IT(stmt) ({ (stmt); false; })
 #define OB_FALSE_IT(stmt) ({ (stmt); false; })
 
@@ -676,7 +672,7 @@ int wild_compare(const ObString &str, const ObString &wild_str, const bool str_i
 ///wild char
 ///param [in] count count of arguments
 ///param [in] ... strings of needed to compute sort value
-uint64_t get_sort(uint count, ...);
+uint64_t get_sort(uint32_t count, ...);
 
 ///@brief Get the sort value.
 ///param [in] str string needed to compute sort value

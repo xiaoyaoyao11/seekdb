@@ -1314,7 +1314,7 @@ int wild_compare(const ObString &str, const ObString &wild_str, const bool str_i
   return ret;
 }
 
-uint64_t get_sort(uint count, ...)
+uint64_t get_sort(uint32_t count, ...)
 {
   const char wild_many = '%';
   const char wild_one = '_';
@@ -1328,15 +1328,15 @@ uint64_t get_sort(uint count, ...)
     while (count--) {
       char *start = NULL;
       char *str= va_arg(args,char*);
-      uint chars= 0;
-      uint wild_pos= 0;           // first wildcard position
+      uint32_t chars= 0;
+      uint32_t wild_pos= 0;           // first wildcard position
 
       if ((start = str)) {
         for (; *str ; str++) {
           if (*str == wild_prefix && str[1]) {
             str++;
           } else if (*str == wild_many || *str == wild_one) {
-            wild_pos= (uint) (str - start) + 1;
+            wild_pos= static_cast<uint32_t>(str - start) + 1;
             break;
           }
           chars= 128;                             // Marker that chars existed
@@ -1570,17 +1570,17 @@ static int use_daemon()
   if (OB_SUCC(ret)) {
     // 1. Remove background state from current thread using PRIO_DARWIN_THREAD
     int darwin_thread_ret = setpriority(PRIO_DARWIN_THREAD, 0, 0);
-    
-    // 2. Remove background state from process using PRIO_DARWIN_PROCESS  
+
+    // 2. Remove background state from process using PRIO_DARWIN_PROCESS
     int darwin_proc_ret = setpriority(PRIO_DARWIN_PROCESS, 0, 0);
-    
+
     // 3. Set thread QoS to USER_INITIATED using platform compatibility layer
     int qos_ret = lib::ob_set_thread_qos(lib::ObThreadQoS::USER_INITIATED);
-    
+
     // 4. Set normal process priority
     int prio_ret = setpriority(PRIO_PROCESS, 0, 0);
-    
-    _LOG_INFO("macOS daemon priority setup: darwin_thread=%d, darwin_proc=%d, qos=%d, prio=%d", 
+
+    _LOG_INFO("macOS daemon priority setup: darwin_thread=%d, darwin_proc=%d, qos=%d, prio=%d",
               darwin_thread_ret, darwin_proc_ret, qos_ret, prio_ret);
   }
 #endif

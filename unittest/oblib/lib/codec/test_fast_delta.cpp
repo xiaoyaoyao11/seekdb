@@ -18,9 +18,9 @@
 
 #include "gtest/gtest.h"
 
-namespace oceanbase 
+namespace oceanbase
 {
-namespace common 
+namespace common
 {
 
 int do_test() {

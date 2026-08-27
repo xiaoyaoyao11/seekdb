@@ -52,7 +52,7 @@ int ObDDLMergeScheduler::check_need_merge_for_idempotent(ObTablet &tablet, ObArr
   if (ddl_kv_type != ObDDLKVType::DDL_KV_INVALID || need_schedule_merge) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("invalid argument, return param should be invalid", K(ret), K(ddl_kv_type), K(need_schedule_merge));
-  } else if ((tablet.get_major_table_count() > 0) || 
+  } else if ((tablet.get_major_table_count() > 0) ||
               tablet.get_tablet_meta().table_store_flag_.with_major_sstable()) {
     LOG_INFO("tablet already exist, not need to merge", K(ret), K(tablet.get_tablet_id()));
   } else {

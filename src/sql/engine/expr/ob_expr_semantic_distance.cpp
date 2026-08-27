@@ -26,7 +26,7 @@
  #include "data_plane/vector/ob_vector_cosine_distance.h"
  #include "data_plane/vector/ob_vector_ip_distance.h"
  #include "data_plane/vector/ob_vector_l1_distance.h"
- 
+
  namespace oceanbase
  {
  namespace sql
@@ -143,7 +143,7 @@
    
    return ret;
  }
- 
+
  int ObExprSemanticVectorDistance::is_valid_for_generated_column(
      const ObRawExpr *expr,
      const common::ObIArray<ObRawExpr *> &exprs,
@@ -154,6 +154,6 @@
    is_valid = false;
    return OB_SUCCESS;
  }
- 
+
  } // namespace sql
  } // namespace oceanbase 

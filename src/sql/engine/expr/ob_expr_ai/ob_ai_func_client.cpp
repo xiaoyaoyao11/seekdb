@@ -87,7 +87,7 @@ int ObAIFuncClient::init(common::ObIAllocator &allocator, const common::ObString
     if (OB_FAIL(ob_write_string(*allocator_, url, url_str, true))) {
     } else {
       url_ = url_str.ptr();
-    } 
+    }
     timeout_sec_ = std::min(std::max(static_cast<int64_t>(1), remain_timeout_us / 1000000), static_cast<int64_t>(CURL_MAX_TIMEOUT_SEC));
     abs_timeout_ts_ = remain_timeout_us + ObTimeUtility::current_time();
     if (OB_SUCC(ret)){
@@ -148,7 +148,7 @@ int ObAIFuncClient::send_post(ObJsonObject *data, ObJsonObject *&response)
     ObStringBuffer response_buf(allocator_);
     int64_t http_code = 0;
     if (OB_FAIL(init_easy_handle(curl_, data, response_buf))) {
-    } 
+    }
     // retry if need
     for (int64_t i = 0; OB_SUCC(ret) && i <= max_retry_times_; ++i) {
       http_code = 0;
