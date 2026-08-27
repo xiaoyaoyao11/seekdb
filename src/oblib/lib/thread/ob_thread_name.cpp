@@ -55,7 +55,9 @@ void set_thread_name(const char* type, uint64_t idx)
   
   char *ori_tname = ob_get_origin_thread_name();
   STRNCPY(ori_tname, type, oceanbase::OB_THREAD_NAME_BUF_LEN);
-  snprintf(name, OB_THREAD_NAME_BUF_LEN, "%s%llu", type, static_cast<unsigned long long>(idx));
+  {
+    snprintf(name, OB_THREAD_NAME_BUF_LEN, "T%ld_%s%ld", 1UL, type, idx);
+  }
   set_thread_name_inner(name);
 }
 
@@ -65,7 +67,9 @@ void set_thread_name(const char* type)
   
   char *ori_tname = ob_get_origin_thread_name();
   STRNCPY(ori_tname, type, oceanbase::OB_THREAD_NAME_BUF_LEN);
-  snprintf(name, OB_THREAD_NAME_BUF_LEN, "%s", type);
+  {
+    snprintf(name, OB_THREAD_NAME_BUF_LEN, "T%ld_%s", 1UL, type);
+  }
   set_thread_name_inner(name);
 }
 

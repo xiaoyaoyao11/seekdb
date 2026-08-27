@@ -28,12 +28,10 @@ namespace omt
 struct ObServerRuntimeMeta final
 {
 public:
-  static constexpr int32_t LEGACY_CREATE_STATUS_CREATED = 1;
-
   ObServerRuntimeMeta()
     : runtime_config_(),
       super_block_(),
-      legacy_create_status_(LEGACY_CREATE_STATUS_CREATED) {}
+      create_status_(storage::ObServerRuntimeCreateStatus::CREATING) {}
   ObServerRuntimeMeta(const ObServerRuntimeMeta &) = default;
   ObServerRuntimeMeta &operator=(const ObServerRuntimeMeta &) = default;
 
@@ -41,24 +39,20 @@ public:
 
   bool is_valid() const
   {
-    return runtime_config_.is_valid()
-        && super_block_.is_valid()
-        && LEGACY_CREATE_STATUS_CREATED == legacy_create_status_;
+    return runtime_config_.is_valid() && super_block_.is_valid();
   }
 
   int build(const share::ObServerRuntimeConfig &runtime_config,
             const storage::ObServerRuntimeSuperBlock &super_block);
 
-  TO_STRING_KV(K_(runtime_config), K_(super_block), K_(legacy_create_status));
+  TO_STRING_KV(K_(runtime_config), K_(super_block), K_(create_status));
 
   OB_UNIS_VERSION_V(1);
 
 public:
   share::ObServerRuntimeConfig runtime_config_;
   storage::ObServerRuntimeSuperBlock super_block_;
-  // Serialized only to preserve the V1 checkpoint wire format. Runtime
-  // lifecycle recovery no longer uses this field.
-  int32_t legacy_create_status_;
+  storage::ObServerRuntimeCreateStatus create_status_;
 };
 
 }  // end namespace omt

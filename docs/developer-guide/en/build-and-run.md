@@ -1,86 +1,63 @@
-# Get the code, build, and run seekdb
+
+# Get the code, build and run
 
 ## Prerequisites
 
-Install the supported compiler and dependencies described in [Install the toolchain](toolchain.md). A full source build requires substantial disk space and memory.
+Check the [Install toolchain](toolchain.md) guide for supported OS, GLIBC version requirement, and how to install the C++ toolchain.
 
-## Clone the repository
+## Clone
 
-```bash
+Clone the source code to your development machine:
+
+```shell
 git clone https://github.com/oceanbase/seekdb.git
-cd seekdb
 ```
 
-## Build the production binary
+## Build
 
-The build supports Release (`RelWithDebInfo`, `-O2`). It includes debug information while retaining production optimization. Debug is not a supported `build.sh` mode.
+Build OceanBase seekdb from the source code in debug mode or release mode:
 
-```bash
-./build.sh release --init --make
+### Debug mode
+
+```shell
+bash build.sh debug --init --make
 ```
 
-`--init` prepares the repository's platform-specific dependencies. It is normally required on the first build or after dependency metadata changes. The resulting binary is:
+### Release mode
 
-```text
-build_release/src/observer/seekdb
+```shell
+bash build.sh release --init --make
 ```
 
-For incremental builds after initialization, run:
+## Run
 
-```bash
-./build.sh release --make
-```
+Now that you built the `seekdb` binary, you can deploy a seekdb instance with the `obd.sh` utility:
 
-On Linux, the same CMake build also provides module unit-test targets and the `pretest` aggregate. See [Write and run unit tests](unittest.md).
-
-## Build a Sanity binary
-
-On Linux, use the dedicated CMake `sanity` mode to configure a seekdb build instrumented with Sanity:
-
-```bash
-./build.sh sanity --init
-```
-
-`--init` is normally required only for the first build or after dependency metadata changes. As with Release mode, add `--make` to configure and compile in one command:
-
-```bash
-./build.sh sanity --init --make -j32
-```
-
-For later incremental builds, run:
-
-```bash
-./build.sh sanity --make -j32
-```
-
-The resulting binary is:
-
-```text
-build_sanity/src/observer/seekdb
-```
-
-## Run a local instance
-
-Prepare an isolated deployment and start seekdb through the repository's `obd.sh` wrapper:
-
-```bash
+```shell
 ./tools/deploy/obd.sh prepare -p /tmp/obtest
 ./tools/deploy/obd.sh deploy -c ./tools/deploy/single.yaml
 ```
 
-Read `mysql_port` from `tools/deploy/single.yaml`. When the generated port is `10000`, connect with either client:
+You can check the `mysql_port` in `./tools/deploy/single.yaml` file to see the listening port. Normally, if you deploy with the root user, the seekdb server will listen on port 10000, and the examples below are also based on this port.
 
-```bash
-mysql -h127.0.0.1 -P10000 -uroot
+## Connect
+
+You can use the official MySQL client to connect to seekdb:
+
+```shell
+mysql -uroot -h127.0.0.1 -P10000
+```
+
+Alternatively, you can use the `obclient` to connect to seekdb:
+
+```shell
 ./deps/3rd/u01/obclient/bin/obclient -h127.0.0.1 -P10000 -uroot -Doceanbase -A
 ```
 
-Use the actual generated port if it differs.
+## Shutdown
 
-## Stop and remove the local deployment
+You can run the following command to shut down the server and clean up the deployment, which prevents disk space consumption:
 
-```bash
+```shell
 ./tools/deploy/obd.sh destroy --rm -n single
 ```
-
-This command stops the local instance and removes the deployment data created by this example. Do not point it at data that must be retained.

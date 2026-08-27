@@ -26,6 +26,7 @@ namespace oceanbase
 {
 namespace common
 {
+class ObServerConfig;
 class ObMySQLProxy;
 }
 namespace rootserver
@@ -37,7 +38,8 @@ class ObDailyMajorFreezeLauncher : public common::ObTimerTask
 public:
   ObDailyMajorFreezeLauncher();
   virtual ~ObDailyMajorFreezeLauncher();
-  int init(common::ObMySQLProxy &proxy,
+  int init(common::ObServerConfig &config,
+           common::ObMySQLProxy &proxy,
            ObMajorMergeInfoManager &merge_info_manager);
 
   virtual void runTimerTask() override;
@@ -70,6 +72,7 @@ private:
   bool is_paused_;
   bool already_launch_;
   common::ObMySQLProxy *sql_proxy_;
+  common::ObServerConfig *config_;
   int64_t gc_freeze_info_last_timestamp_;
   ObMajorMergeInfoManager *merge_info_mgr_;
   int64_t last_check_tablet_ckm_us_;

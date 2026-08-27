@@ -17,7 +17,6 @@
 #ifndef _OCEANBASE_SQL_OB_SQL_UTILS_H
 #define _OCEANBASE_SQL_OB_SQL_UTILS_H
 
-#include "config_bridge.h"
 #include "common/ob_range.h"
 #include "sql/rewrite/ob_query_range_provider.h"
 #include "common/object/ob_object.h"
@@ -528,7 +527,7 @@ public:
   {
     int64_t thredhold = OB_MAX_SQL_LENGTH;
 
-    thredhold = config::_query_record_size_limit();
+    thredhold = GCONF._query_record_size_limit;
 
     return thredhold;
   }

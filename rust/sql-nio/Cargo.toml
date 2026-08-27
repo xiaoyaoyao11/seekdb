@@ -15,9 +15,8 @@ too_many_arguments = "allow"
 [lib]
 name = "sql_nio"
 # staticlib -> libsql_nio.a for linking into C++ (the future ObSqlNio shell);
-# rlib      -> Rust consumers.
+# rlib      -> cargo test / Rust consumers.
 crate-type = ["staticlib", "rlib"]
-test = false
 
 [dependencies]
 # mio = epoll (Linux) / kqueue (macOS) / IOCP (Windows), no async runtime.
@@ -41,9 +40,6 @@ rustls-pki-types = { version = "1", features = ["std"] }
 # handshake/verifier; this crate only turns the already-verified peer DER into
 # the account-policy fields exposed by the narrow C ABI.
 x509-parser = { version = "0.18", default-features = false }
-
-[build-dependencies]
-cbindgen = "=0.29.4"
 
 # libc::shutdown is only used on the Unix path.
 [target.'cfg(unix)'.dependencies]

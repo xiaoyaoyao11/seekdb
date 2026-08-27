@@ -1,75 +1,101 @@
-# Write and run unit tests
+# Write and Run Unit Tests
 
-seekdb uses [Google Test](https://google.github.io/googletest/) for C++ unit tests. Tests live under `unittest/` and are grouped into CMake module targets such as `observer_tests`, `storage_tests`, and `sql_tests`.
+## How to Build and Run All Unit Tests
 
-## Configure the test build
+[OceanBase seekdb](https://github.com/oceanbase/seekdb) has two unittest directories.
 
-CMake unit-test targets are available on Linux. Initialize the dependencies and configure the Release build before building a test module:
+- `unittest`: These are the main unit test cases, and they test the code in the `src` directory.
 
-```bash
-./build.sh release --init
-```
+- `deps/oblib/unittest`: Test cases for oblib.
 
-`--init` is normally required only for the first build or after dependency metadata changes. For later reconfiguration, run `./build.sh release` without `--init`.
-
-## Choose and build a module
-
-List the available module targets:
+First, you should build `unittest`. Enter the `unittest` directory in the build directory and build explicitly. When you build the seekdb project, it doesn't build the unit tests by default. For example:
 
 ```bash
-make -C build_release help | grep '_tests'
+bash build.sh --init --make # init and build a debug mode project
+cd build_debug/unittest  # or cd build_debug/deps/oblib/unittest
+make -j4 # build unittest
 ```
 
-Build the module affected by the change, for example:
+Then you can execute the script file `run_tests.sh` to run all test cases.
+
+## How to Build and Run a Single Unit Test
+
+You can also build and test a single unit test case. Enter the `build_debug` directory and execute `make case-name` to build the specific case and run the built binary file. For example:
 
 ```bash
-make -C build_release observer_tests
-make -C build_release storage_tests
+cd build_debug
+# **NOTE**: don't enter the unittest directory
+make -j4 test_chunk_row_store
+find . -name "test_chunk_row_store"
+# got ./unittest/sql/engine/basic/test_chunk_row_store
+./unittest/sql/engine/basic/test_chunk_row_store
 ```
 
-Each binary is generated at `build_release/unittest/<module>/<module>_tests`.
+## How to Write Unit Tests
 
-## Run a module
+As a C++ project, [OceanBase seekdb](https://github.com/oceanbase/seekdb) uses [Google Test](https://github.com/google/googletest) as the unit test framework.
 
-The generated `run_tests.sh` wrapper invokes CTest with the environment and working directories required by the tests. Run all shards of a module with a regular expression, for example:
+seekdb uses `test_xxx.cpp` as the unit test file name. Create a `test_xxx.cpp` file and add the file name to the specific `CMakeLists.txt` file.
 
-```bash
-./build_release/unittest/run_tests.sh \
-  -R '^observer_tests_shard_[0-9]+$' \
-  --output-on-failure
-```
-
-To run one Google Test case, set `GTEST_FILTER` while keeping the module shard selection:
-
-```bash
-GTEST_FILTER='ComponentName.handles_invalid_input' \
-  ./build_release/unittest/run_tests.sh \
-  -R '^observer_tests_shard_[0-9]+$' \
-  --output-on-failure
-```
-
-Prefer the narrowest module and test filter that cover the change before running a wider test set.
-
-## Write a test
-
-Name test files `test_*.cpp`, place them under the matching `unittest/<module>/` directory, include `<gtest/gtest.h>`, and add focused `TEST` or `TEST_F` cases. CMake discovers the module's C++ test sources automatically. Follow the module's shared-main pattern; do not add a separate `main()`.
+In the `test_xxx.cpp` file, add the header file `#include <gtest/gtest.h>` and the main function below.
 
 ```cpp
-TEST(ComponentName, handles_invalid_input)
+int main(int argc, char **argv)
 {
-  ASSERT_EQ(OB_INVALID_ARGUMENT, call_with_invalid_input());
+  testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
 }
 ```
 
-Use `ASSERT_*` when the rest of the test cannot continue after a failure and `EXPECT_*` when subsequent checks remain meaningful.
+You can then add functions to test different scenarios. Below is an example from `test_ra_row_store_projector.cpp`.
 
-## Build and run all modules
+```cpp
+///
+/// TEST is a google test macro.
+/// You can use it to create a new test function
+///
+/// RARowStore is the test suite name and alloc_project_fail
+/// is the test name.
+///
+TEST(RARowStore, alloc_project_fail)
+{
+  ObEmptyAlloc alloc;
+  ObRARowStore rs(&alloc, true);
 
-The `pretest` target builds all CMake unit-test modules. Run the registered CTest shards separately after the build completes:
+  /// ASSERT_XXX are testing macros that help us determine whether the results
+  /// are expected, and they will terminate the test if failed.
+  ///
+  /// There are some other testing macros beginning with `EXPECT_` which
+  /// don't terminate the test if failed.
+  ///
+  ASSERT_EQ(OB_SUCCESS, rs.init(100 << 20));
+  const int64_t OBJ_CNT = 3;
+  ObObj objs[OBJ_CNT];
+  ObNewRow r;
+  r.cells_ = objs;
+  r.count_ = OBJ_CNT;
+  int64_t val = 0;
+  for (int64_t i = 0; i < OBJ_CNT; i++) {
+    objs[i].set_int(val);
+    val++;
+  }
 
-```bash
-make -C build_release pretest
-./build_release/unittest/run_tests.sh --output-on-failure
+  int32_t projector[] = {0, 2};
+  r.projector_ = projector;
+  r.projector_size_ = ARRAYSIZEOF(projector);
+
+  ASSERT_EQ(OB_ALLOCATE_MEMORY_FAILED, rs.add_row(r));
+}
 ```
 
-Pass `-j <jobs>` to `run_tests.sh` when parallel execution is appropriate. CI also runs unit tests and mysqltest cases for pull requests. Record the exact targets and filters you ran in the pull-request description.
+Please refer to the [Google Test documentation](https://google.github.io/googletest/) for more details about `TEST`, `ASSERT`, and `EXPECT`.
+
+## Unit Tests on GitHub CI
+
+Before a pull request is merged, the CI will test your pull request. The `Farm` will test the `mysql test` and `unittest`. You can see the details by following the `Details` link as shown below.
+
+![GitHub CI](images/unittest-github-ci.png)
+
+![GitHub CI Farm Details](images/unittest-ci-details.png)
+
+![Farm Unittest](images/unittest-unittest.png)

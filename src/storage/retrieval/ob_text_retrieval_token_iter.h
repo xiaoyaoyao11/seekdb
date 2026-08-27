@@ -139,6 +139,7 @@ public:
     score = token_iter_->get_max_token_relevance();
     if (OB_UNLIKELY(score < 0.0)) {
       ret = OB_ERR_UNEXPECTED;
+      LOG_WARN("unexpected max token relevance", K(ret), K(score));
     }
     return ret;
   }

@@ -33,7 +33,7 @@
     <a href="https://discord.gg/74cF8vbNEs">
         <img alt="Join Discord" src="https://img.shields.io/badge/Discord-Join%20Chat-5865F2?logo=discord&style=flat-square" />
     </a>
-    <a href="https://docs.seekdb.ai/">
+    <a href="https://seekdb.ai">
         <img alt="Documentation" src="https://img.shields.io/badge/Docs-seekdb.ai-4285F4?style=flat-square&logo=read-the-docs&logoColor=white" />
     </a>
     <a href="https://deepwiki.com/oceanbase/seekdb">
@@ -98,7 +98,7 @@ pip install -U pyseekdb   # pyseekdb 是 seekdb 的 Python SDK
 
 ### 🔥 流式写入 + 并发搜索，P99 零毛刺
 
-Agent 工作负载的核心特征是持续写入 + 毫秒级读取。seekdb 的**异步索引流水线（Change Stream）** 将 DML 与索引构建解耦，**两级 HNSW**（增量 + 快照）让新写入的向量立即可搜索。
+Agent 工作负载的核心特征是持续写入 + 毫秒级读取。seekdb 的**异步索引流水线（Change Stream）**将 DML 与索引构建解耦，**两级 HNSW**（增量 + 快照）让新写入的向量立即可搜索。
 
 <div align="center">
   <img src="images/architecture.svg" alt="seekdb 异步索引流水线架构" width="720" />
@@ -108,7 +108,7 @@ Agent 工作负载的核心特征是持续写入 + 毫秒级读取。seekdb 的*
 
 > **实测结果：1,523 QPS，并发 P99 仅 21.7 ms — QPS 达 Milvus 的 10.7 倍；并发提升时 P99 波动仅 1.1 倍（同等负载下 ES / Milvus 约为 10 倍）。**
 
-<sub>源码: [`src/observer/change_stream/`](src/observer/change_stream/) · [`src/observer/vector_index/`](src/observer/vector_index/)</sub>
+<sub>源码: [`src/share/change_stream/`](src/share/change_stream/) · [`src/share/vector_index/`](src/share/vector_index/)</sub>
 
 ### 🌿 写时复制沙箱，Agent 自由探索
 
@@ -369,6 +369,7 @@ seekdb 的混合检索 + 多模引擎同样适用于经典 AI 工作负载：
 # 克隆仓库
 git clone https://github.com/oceanbase/seekdb.git
 cd seekdb
+source ~/.bashrc
 ./build.sh release --init --make
 mkdir -p ~/seekdb/bin
 cp build_release/src/observer/seekdb ~/seekdb/bin

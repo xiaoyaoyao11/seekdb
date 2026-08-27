@@ -1638,8 +1638,7 @@ protected:
   int sort_qual_by_selectivity(ObIArray<ObRawExpr*> &join_pred);
 
   int generate_subplan_for_query_ref(ObQueryRefRawExpr *query_ref,
-                                     SubPlanInfo *&subplan_info,
-                                     bool force_serial = false);
+                                     SubPlanInfo *&subplan_info);
 
   int greedy_idp_best_order(uint32_t current_level,
                             common::ObIArray<JoinOrderArray> &idp_join_rels,

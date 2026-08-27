@@ -28,6 +28,8 @@ int ObTextDaaTIter::init(const ObTextDaaTParam &param)
   if (OB_ISNULL(param.base_param_) || OB_ISNULL(param.dim_iters_) || OB_ISNULL(param.allocator_)
       || OB_ISNULL(param.relevance_collector_)) {
     ret = OB_INVALID_ARGUMENT;
+    LOG_WARN("unexpected null pointer in param", K(ret), KP_(param.base_param),
+             KP_(param.dim_iters), KP_(param.allocator), KP_(param.relevance_collector));
   } else if (OB_FAIL(ObSRDaaTIterImpl::init(*param.base_param_, *param.dim_iters_,
                                             *param.allocator_, *param.relevance_collector_))) {
   } else if (OB_FAIL(bm25_param_estimator_.init(param.bm25_param_est_ctx_))) {
@@ -109,6 +111,8 @@ int ObTextBMWIter::init(const ObTextDaaTParam &param)
   if (OB_ISNULL(param.base_param_) || OB_ISNULL(param.dim_iters_) || OB_ISNULL(param.allocator_)
       || OB_ISNULL(param.relevance_collector_)) {
     ret = OB_INVALID_ARGUMENT;
+    LOG_WARN("unexpected null pointer in param", K(ret), KP_(param.base_param),
+             KP_(param.dim_iters), KP_(param.allocator), KP_(param.relevance_collector));
   } else if (OB_FAIL(ObSRBMWIterImpl::init(*param.base_param_, *param.dim_iters_,
                                            *param.allocator_, *param.relevance_collector_))) {
   } else if (OB_FAIL(bm25_param_estimator_.init(param.bm25_param_est_ctx_))) {
@@ -121,6 +125,7 @@ int ObTextBMWIter::get_next_rows(const int64_t capacity, int64_t &count)
   int ret = OB_SUCCESS;
   if (IS_NOT_INIT) {
     ret = OB_NOT_INIT;
+    LOG_WARN("not inited", K(ret));
   } else if (dim_iters_->count() == 0) {
     ret = OB_ITER_END;
   } else if (OB_FAIL(bm25_param_estimator_.do_estimation(*iter_param_->eval_ctx_))) {
@@ -128,6 +133,7 @@ int ObTextBMWIter::get_next_rows(const int64_t capacity, int64_t &count)
 
   if (FAILEDx(ObSRBMWIterImpl::get_next_rows(capacity, count))) {
     if (OB_UNLIKELY(OB_ITER_END != ret)) {
+      LOG_WARN("failed to get next rows", K(ret));
     }
   }
   return ret;
@@ -138,6 +144,7 @@ int ObTextBMWIter::init_before_wand_process()
   int ret = OB_SUCCESS;
   if (OB_UNLIKELY(!bm25_param_estimator_.is_estimated())) {
     ret = OB_ERR_UNEXPECTED;
+    LOG_WARN("bm25 param not estimated", K(ret));
   }
 
   for (int64_t i = 0; OB_SUCC(ret) && i < dim_iters_->count(); ++i) {

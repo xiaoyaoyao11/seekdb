@@ -15,22 +15,6 @@ For the multi-tenant model, the impact of memory management design mainly includ
 
 This article will introduce the commonly used memory allocation interfaces and memory management related idioms in seekdb. For technical details of memory management, please refer to [Memory Management](https://open.oceanbase.com/blog/8501613072)( In Chinese).
 
-## Runtime memory budget
-
-`memory_budget` is the logical budget used to size caches and buffers. Its default is `0M`, which selects an automatic value based on the smaller effective cgroup or physical-memory capacity. The automatic calculation targets 80%, reserves at least 1 GiB for the system when possible, and never produces less than 1 GiB.
-
-An explicit non-zero value must be at least 1 GiB. The main derived defaults are:
-
-| Parameter | Default behavior when set to `0M` |
-| --- | --- |
-| `kvcache_memory_limit` | `min(1 TiB, 40% of memory_budget)` |
-| `memstore_memory_limit` | `50% of memory_budget` |
-| `vector_memory_limit` | `50% of effective memory (the smaller of physical memory and a finite cgroup memory limit)` |
-
-TxShare accounts for Memstore, TxData, and MDS memory. Its limit is `11/16 of memory_budget` when the budget is at most 6.4 GiB, and `13/16 of memory_budget` otherwise. Vector memory is excluded from both TxShare accounting and throttling; its allocation checks use the current `vector_memory_limit` independently, including after configuration reload. These independent limits do not constitute a process-wide memory cap.
-
-`memory_limit` is retained only as a deprecated compatibility parameter. Its configured value is accepted and persisted, but current memory sizing and control ignore it. Use `memory_budget` for new configurations. There is no `memory_reserved` configuration parameter.
-
 # Common Interfaces and Methods of OceanBase seekdb Memory Management
 seekdb provides different memory allocators for different scenarios. In addition, in order to improve program execution efficiency, there are some conventional implementations, such as reset/reuse, etc.
 
@@ -116,7 +100,9 @@ ctx id is predefined, please refer to `alloc_struct.h`. Each ctx_id of each tena
 
 **prio**
 
-Two allocation priorities are currently defined: Normal and High. Normal is the default. See `enum ObAllocPrio` in `alloc_struct.h` and the current allocator implementation for the exact behavior. Do not describe the high-priority path in terms of a `memory_reserved` configuration item, because that parameter is not part of the current configuration surface.
+Currently, two memory allocation priorities are supported, Normal and High. The default is Normal. For definition, please refer to the `enum ObAllocPrio` in file `alloc_struct.h`. High priority memory can allocate memory from urgent (memory_reserved) memory, otherwise it cannot. Refer to `AChunkMgr::update_hold` implementation.
+
+> You can use the configuration item `memory_reserved` to view the reserved memory size.
 
 ## init/destroy/reset/reuse
 

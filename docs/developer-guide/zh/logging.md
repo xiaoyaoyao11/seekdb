@@ -21,24 +21,26 @@ seekdb 的系统日志存储在工作目录下的log目录下面。
 
 ### 日志参数
 
-当前 syslog 相关参数都是动态生效的集群级参数。权威定义位于 `src/share/parameter/ob_parameter_seed.ipp`。
+目前syslog相关的有7个参数，都是动态生效，即可以在运行时动态调整。
 
-| 配置项 | 默认值 | 说明 |
-| --- | --- | --- |
-| `syslog_level` | 构建默认值 | 最低启用级别：DEBUG、TRACE、WDIAG、EDIAG、INFO、WARN 或 ERROR |
-| `syslog_io_bandwidth_limit` | `5MB` | syslog I/O 带宽限制 |
-| `diag_syslog_per_error_limit` | `200` | 每个错误码每秒允许的 DIAG 日志数 |
-| `max_syslog_file_count` | `2` | 每种日志文件的最大保留数量；`0` 表示不按数量删除 |
-| `enable_async_syslog` | `True` | 是否启用异步日志 |
-| `syslog_disk_size` | `0M` | syslog 文件的磁盘空间预算；`0M` 表示不设置该限制 |
-| `syslog_compress_func` | `none` | 归档日志压缩方式：`none` 或 `zstd_1.3.8` |
-| `syslog_file_uncompressed_count` | `0` | 至少保留多少个不压缩的归档日志文件 |
+| 配置项                         | 数据类型 | 值域                                        | 默认值    | 描述                                    |
+| --------------------------- | ---- | ----------------------------------------- | ------ | ------------------------------------- |
+| enable_syslog_recycle       | 布尔   |                                           | False  | 是否回收重启之前的旧日志（时间戳最小的日志文件）              |
+| enable_syslog_wf            | 布尔   |                                           | True   | 是否打印WARN级别及以上的日志到单独的wf文件中             |
+| enable_async_syslog         | 布尔   |                                           | True   | 是否异步打印日志                              |
+| max_syslog_file_count       | 整型   | \[0, +∞)                                  | 0      | 每种只读日志文件最大保留数量                        |
+| syslog_io_bandwidth_limit   | 字符串  | 0，其他合法大小                                  | "30MB" | 日志IO带宽限制                              |
+| syslog_level                | 字符串  | DEBUG, TRACE, WDIAG, EDIAG, INFO, WARN, ERROR | WDIAG | 日志打印最低等级，该等级及以上的日志都打印                 |
+| diag_syslog_per_error_limit | 整型   | \[0, +∞)                                  | 200    | 每个错误码每秒允许的 DIAG 系统日志数，超过该阈值后，日志将不再打印。 |
+
+> 这里所有的参数都是集群级的，并且都是动态生效。
+> 参数定义可以参考 ob_parameter_seed.ipp 文件。
 
 ## 日志回收
 
 seekdb的日志可以配置文件个数上限，以防止日志文件占用过大的磁盘空间。
 
-当 `max_syslog_file_count` 大于零时，按数量限制每种日志文件的保留数量；`syslog_disk_size` 则限制 syslog 使用的磁盘空间。某项设置为零表示不启用对应限制。
+如果 `enable_syslog_recycle = true` 且 `max_syslog_file_count > 0` ，每种日志文件的数量不能超过 `max_syslog_file_count`。日志内容刷新到磁盘中时触发旧日志文件回收。
 
 每次执行 `flush_logs_to_file` 函数写日志时，如果某种文件写入了数据，就要检查是否需要将当前日志文件进行归档（有可能达到了大小上限）。
 在 `max_syslog_file_count > 0` 的前提下，就可能会调用 `ObLogger::rotate_log` 函数，如果该种日志文件数量超过上限 `max_syslog_file_count`，就会删掉最旧的一个日志文件。
@@ -119,7 +121,7 @@ LOG_INFO("start stmt", K(ret),
 
 ```textile
 [2023-12-11 18:00:55.711877] INFO  [SQL.EXE] start_stmt (ob_sql_trans_control.cpp:619) 
-[99178][TeRec][T1003][YD9F97F000001-00060C36119D4757-0-0] [lt=15]
+[99178][T1004_TeRec][T1003][YD9F97F000001-00060C36119D4757-0-0] [lt=15] 
 start stmt(ret=0, auto_commit=true, session_id=1, 
 snapshot={this:0x7f3184fca0e8, valid:true, source:2, 
 core:{version:{val:1702288855549635029, v:0}, tx_id:{txid:167035}, 
@@ -160,7 +162,7 @@ cflict_txs:[]})
 | 模块       | [SQL.EXE]                            | 日志打印模块                              |
 | 函数名称     | start_stmt                           | 打印日志的函数名称                           |
 | 代码位置信息   | (ob_sql_trans_control.cpp:619)       | 打印日志的代码位置。包含文件名和行号                  |
-| 线程标识     | [99178][TeRec]                       | 打印日志的线程号、线程名称                       |
+| 线程标识     | [99178][T1004_TeRec]                 | 打印日志的线程号、线程名称                       |
 | 租户信息     | [T1003]                              | 租户信息                                |
 | Trace ID | [YD9F97F000001-00060C36119D4757-0-0] | 某个请求的全局唯一标识。通常可以通过这个标识获取所有当前请求的所有日志 |
 | 打印日志时间   | [lt=15]                              | 当前线程打印上一条日志花费的时间，单位微秒               |
@@ -284,7 +286,9 @@ seekdb 的日志时间是当前本地时间的微秒数。
 当前会记录两个线程相关的信息：
 
 - 线程号：系统调用 `__NR_gettid` 返回的信息（系统调用比较低效，这个值会缓存下来）；
-- 线程名称：线程名称字段包含线程池类型，也可能包含线程池中的编号。seekdb 通过 `set_thread_name` 函数设置线程名称，该名称也会显示在 `top` 命令中。
+- 线程名称：线程名称字段中可能会包含租户ID、线程池类型和线程池中的编号。seekdb的线程号是通过 `set_thread_name` 函数设置的，还会显示在 `top` 命令中。
+
+> NOTE：线程名称是由创建的线程决定的，由于创建线程的租户可能与此线程后续运行的租户不同，所以线程名称中的租户可能不对。
 
 ### 日志限速
 
@@ -314,7 +318,7 @@ seekdb 对WARN级别的日志做了限流，每个错误码每秒钟默认限制
 [2023-12-25 18:01:15.527519] WDIAG [SHARE] refresh (ob_task_define.cpp:402) [35585][LogLimiterRefre][T0][Y0-0000000000000000-0-0] [lt=8][errcode=0] Throttled WDIAG logs in last second(details {error code, dropped logs, earliest tid}=[{errcode:-4006, dropped:31438, tid:35585}])
 ```
 
-限流实现参考 `ObSyslogSimpleRateLimiter` 和 `ObSyslogSampleRateLimiter`，后者实现了 `do_acquire`。
+限流代码参考 `ObSyslogPerErrLimiter::do_acquire`。
 
 
 

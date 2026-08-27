@@ -66,6 +66,7 @@ int ObGetFileIdRangeFunctor::func(const dirent *entry)
   int ret = OB_SUCCESS;
   if (OB_ISNULL(entry)) {
     ret = OB_INVALID_ARGUMENT;
+    LOG_WARN("invalid args", K(ret), KP(entry));
   } else {
     bool is_number = true;
     const char* entry_name = entry->d_name;
@@ -99,11 +100,13 @@ int ObGetFileSizeFunctor::func(const dirent *entry)
   int ret = OB_SUCCESS;
   if (OB_ISNULL(entry)) {
     ret = OB_INVALID_ARGUMENT;
+    LOG_WARN("invalid args", K(ret), KP(entry));
   } else {
     char full_path[common::MAX_PATH_SIZE] = { 0 };
     int p_ret = snprintf(full_path, sizeof(full_path), "%s/%s", dir_, entry->d_name);
     if (p_ret < 0 || p_ret >= sizeof(full_path)) {
       ret = OB_BUF_NOT_ENOUGH;
+      LOG_WARN("file name too long", K(ret), K_(dir), K(entry->d_name));
     } else {
       ObIODFileStat statbuf;
       if (OB_FAIL(LOCAL_DEVICE_INSTANCE.stat(full_path, statbuf))
@@ -143,6 +146,7 @@ int ObScanDirOp::set_dir(const char *dir)
   int ret = OB_SUCCESS;
   if (OB_UNLIKELY(dir == nullptr || strlen(dir) >= common::MAX_PATH_SIZE)) {
     ret = OB_INVALID_ARGUMENT;
+    LOG_WARN("invalid argument", K(ret), K(dir));
   } else {
     dir_ = dir;
   }
@@ -185,6 +189,7 @@ int ObSNIODeviceWrapper::get_local_device_from_mgr(share::ObLocalDevice *&local_
   if(OB_FAIL(common::ObDeviceManager::get_local_device(storage_type_prefix, storage_id_mod, device))) {
   } else if (OB_ISNULL(local_device = static_cast<share::ObLocalDevice*>(device))) {
     ret = OB_ERR_UNEXPECTED;
+    LOG_WARN("fail to get local device", K(ret));
   }
 
   if (OB_FAIL(ret)) {
@@ -213,9 +218,11 @@ int ObSNIODeviceWrapper::init(
 
   if (IS_INIT) {
     ret = OB_INIT_TWICE;
+    LOG_WARN("already inited", K(ret));
   } else if (OB_FAIL(get_local_device_from_mgr(local_device_))) {
   } else if (OB_ISNULL(data_dir) || OB_ISNULL(sstable_dir)) {
     ret = OB_INVALID_ARGUMENT;
+    LOG_WARN("invalid args", K(ret), KP(data_dir), KP(sstable_dir));
   } else if ('/' != data_dir[0] && '.' != data_dir[0]
 #ifdef _WIN32
              && !(isalpha(data_dir[0]) && data_dir[1] == ':')

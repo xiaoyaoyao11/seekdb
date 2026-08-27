@@ -148,11 +148,6 @@ install -m 755 "$SEEKDB_BIN" "$STAGING/opt/seekdb/bin/seekdb"
 info "Bundling dynamic libraries ..."
 DYLIB_DIR="$STAGING/opt/seekdb/lib/seekdb"
 
-# An executable may only depend on system libraries, leaving this directory
-# empty. Expand unmatched dylib globs to an empty list instead of a literal
-# "*.dylib" path.
-shopt -s nullglob
-
 collect_non_system_deps() {
   otool -L "$1" 2>/dev/null | awk '/^\t/ {print $1}' | while read -r dep; do
     case "$dep" in
@@ -187,7 +182,7 @@ while [[ "$changed" -eq 1 ]]; do
   done
 done
 
-BUNDLED_COUNT=$(find "$DYLIB_DIR" -maxdepth 1 -type f -name '*.dylib' | wc -l | tr -d ' ')
+BUNDLED_COUNT=$(ls "$DYLIB_DIR"/*.dylib 2>/dev/null | wc -l | tr -d ' ')
 info "  bundled $BUNDLED_COUNT dylibs"
 
 # rewrite paths: seekdb binary
@@ -212,7 +207,6 @@ info "Re-signing binaries ..."
 for lib in "$DYLIB_DIR"/*.dylib; do
   codesign --force --sign - "$lib" 2>/dev/null || true
 done
-shopt -u nullglob
 codesign --force --sign - "$STAGING/opt/seekdb/bin/seekdb" 2>/dev/null || true
 for script in seekdbctl seekdb_start seekdb_stop seekdb_status seekdb_config \
               seekdb_setup seekdb_paths seekdb_uninstall; do
@@ -266,6 +260,11 @@ done
 # --- config ---
 install -d "$STAGING/opt/seekdb/etc/seekdb"
 install -m 644 "$MACPKG_DIR/launchd/profile/seekdb.cnf" "$STAGING/opt/seekdb/etc/seekdb/"
+for f in default_parameter.json default_system_variable.json; do
+  src="$TOPDIR/src/share/parameter/$f"
+  if [[ ! -f "$src" ]]; then src="$TOPDIR/src/share/system_variable/$f"; fi
+  if [[ -f "$src" ]]; then install -m 644 "$src" "$STAGING/opt/seekdb/etc/seekdb/"; fi
+done
 # ob_system_variable_init.json (generated at build time)
 if [[ -f "$SEEKDB_BUILD/src/share/ob_system_variable_init.json" ]]; then
   install -m 644 "$SEEKDB_BUILD/src/share/ob_system_variable_init.json" "$STAGING/opt/seekdb/etc/seekdb/"

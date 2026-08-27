@@ -16,10 +16,16 @@
 
 #define USING_LOG_PREFIX SHARE
 #include "lib/oblog/ob_log_module.h"
-#include "lib/utility/utility.h"
+#include "share/rc/ob_server_runtime.h"
 #include "share/rc/ob_server_runtime.h"
 #include "observer/change_stream/ob_change_stream_mgr.h"
 #include "storage/tx/ob_ts_mgr.h"
+#include <unistd.h>
+
+#ifndef GET_THREAD_NUM_BY_NPROCESSORS
+#define GET_THREAD_NUM_BY_NPROCESSORS(factor) \
+  (sysconf(_SC_NPROCESSORS_ONLN) / (factor) > 0 ? sysconf(_SC_NPROCESSORS_ONLN) / (factor) : 1)
+#endif
 
 namespace oceanbase
 {
@@ -48,6 +54,7 @@ int ObChangeStreamMgr::server_module_init(
   int ret = common::OB_SUCCESS;
   if (OB_ISNULL(mgr)) {
     ret = common::OB_INVALID_ARGUMENT;
+    LOG_WARN("ObChangeStreamMgr: mgr is null", K(ret));
   } else if (OB_FAIL(
       mgr->init(log_storage, schema_publish_signal, run_wrapper))) {
   } else {
@@ -62,16 +69,15 @@ int ObChangeStreamMgr::init(
     lib::IRunWrapper *run_wrapper)
 {
   int ret = common::OB_SUCCESS;
-  const int64_t worker_thread_count = common::max(common::get_cpu_num(), int64_t{1});
   if (is_inited_) {
     ret = OB_INIT_TWICE;
   } else if (OB_FAIL(fetcher_.init(
       &dispatcher_, log_storage, schema_publish_signal, run_wrapper))) {
   } else if (OB_FAIL(dispatcher_.init())) {
-  } else if (OB_FAIL(worker_.init(worker_thread_count))) {
+  } else if (OB_FAIL(worker_.init(GET_THREAD_NUM_BY_NPROCESSORS(1)))) {
   } else {
     is_inited_ = true;
-    FLOG_INFO("ObChangeStreamMgr init success (Fetcher/Dispatcher/Worker)", K(worker_thread_count));
+    FLOG_INFO("ObChangeStreamMgr init success (Fetcher/Dispatcher/Worker)", K(GET_THREAD_NUM_BY_NPROCESSORS(1)));
   }
   return ret;
 }
@@ -81,6 +87,7 @@ int ObChangeStreamMgr::start()
   int ret = common::OB_SUCCESS;
   if (!is_inited_) {
     ret = common::OB_NOT_INIT;
+    LOG_WARN("ObChangeStreamMgr is not inited", K(ret));
   } else {
     if (OB_FAIL(fetcher_.start())) {
     } else if (OB_FAIL(dispatcher_.start())) {
@@ -144,8 +151,11 @@ int ObChangeStreamMgr::wait_refresh_scn(
       ObCSDispatcher *dispatcher = (OB_NOT_NULL(mgr) ? &mgr->dispatcher_ : nullptr);
       if (now >= abs_timeout_us) {
         ret = OB_TIMEOUT;
+        LOG_WARN("wait change stream refresh scn timeout", KR(ret),
+                 K(safe_visible_scn), K(current_refresh_scn));
       } else if (OB_ISNULL(mgr) || !mgr->is_inited()) {
         ret = OB_NOT_INIT;
+        LOG_WARN("change stream mgr is not inited", KR(ret), KP(mgr));
       } else if (OB_FAIL(current_refresh_scn.convert_for_tx(
                      dispatcher->get_refresh_scn()))) {
       } else if (current_refresh_scn >= safe_visible_scn) {

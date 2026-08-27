@@ -275,6 +275,7 @@ int ObLogIdLevelMap::set_level(const uint64_t par_mod_id, const int8_t level)
     }
   } else {
     ret = OB_LOG_INVALID_MOD_ID;
+    LOG_WARN("Invalid mod id", K(ret), K(par_mod_id));
   }
   return ret;
 }
@@ -288,6 +289,7 @@ int ObLogIdLevelMap::set_level(const uint64_t par_mod_id, const uint64_t sub_mod
     log_level_[par_mod_id][sub_mod_id + 1] = level;
   } else {
     ret = OB_LOG_INVALID_MOD_ID;
+    LOG_WARN("Invalid mod id", K(ret), K(par_mod_id), K(sub_mod_id));
   }
   return ret;
 }
@@ -306,6 +308,7 @@ int ObLogNameIdMap::register_mod(const uint64_t mod_id, const char *mod_name)
   int ret = OB_SUCCESS;
   if (mod_id >= MAX_PAR_MOD_SIZE || NULL == mod_name) {
     ret = OB_INVALID_ARGUMENT;
+    LOG_WARN("Invalid mod id and name", K(ret), K(mod_id), KCSTRING(mod_name));
   } else {
     name_id_map_[mod_id][0] = mod_name;
   }
@@ -319,6 +322,7 @@ int ObLogNameIdMap::register_mod(const uint64_t mod_id,
   int ret = OB_SUCCESS;
   if (mod_id >= MAX_PAR_MOD_SIZE || sub_mod_id >= MAX_SUB_MOD_SIZE || NULL == sub_mod_name) {
     ret = OB_INVALID_ARGUMENT;
+    LOG_WARN("Invalid mod id or name", K(ret), K(mod_id), K(sub_mod_id), KCSTRING(sub_mod_name));
   } else {
     name_id_map_[mod_id][sub_mod_id + 1] = sub_mod_name;
   }
@@ -336,9 +340,11 @@ int ObLogNameIdMap::get_mod_id(const char *mod_name,
 
   if (NULL == mod_name || NULL == sub_mod_name) {
     ret = OB_INVALID_ARGUMENT;
+    LOG_WARN("Invalid argument", K(ret), KCSTRING(mod_name), KCSTRING(sub_mod_name));
   } else if (OB_FAIL(get_mod_id(mod_name, par_mod_id))) {
   } else if (OB_UNLIKELY(par_mod_id >= MAX_PAR_MOD_SIZE)) {
     ret = OB_ERR_UNEXPECTED;
+    LOG_WARN("Get invalid par mod id", K(ret));
   } else {
     //find sub_mod_id
     bool find_mod = false;
@@ -355,6 +361,7 @@ int ObLogNameIdMap::get_mod_id(const char *mod_name,
 
     if (!find_mod) {
       ret = OB_LOG_MODULE_UNKNOWN;
+      LOG_WARN("Failed to find sub_mod", K(ret), KCSTRING(mod_name), KCSTRING(sub_mod_name));
     }
   }
   return ret;
@@ -367,6 +374,7 @@ int ObLogNameIdMap::get_mod_id(const char *mod_name, uint64_t &par_mod_id) const
 
   if (NULL == mod_name) {
     ret = OB_INVALID_ARGUMENT;
+    LOG_WARN("Invalid argument", K(ret), KCSTRING(mod_name));
   } else {
     bool find_mod = false;
     for (uint64_t idx = 0; OB_SUCC(ret) && !find_mod && idx < MAX_PAR_MOD_SIZE; ++idx) {
@@ -381,6 +389,7 @@ int ObLogNameIdMap::get_mod_id(const char *mod_name, uint64_t &par_mod_id) const
     }
     if (!find_mod) {
       ret = OB_LOG_MODULE_UNKNOWN;
+      LOG_WARN("Failed to find sub_mod", K(ret), KCSTRING(mod_name));
     }
   }
   return ret;
@@ -1026,6 +1035,7 @@ int ObLogger::parse_check(const char *str,
           if (OB_SUCC(ret)) {
             ModSetting mod_set;
             if (OB_FAIL(get_mod_set(par_mod, sub_mod, level, mod_set))) {
+              LOG_WARN("Get mod set error", K(ret));
               if (NULL != list) {
                 list->reset();
               }
@@ -1048,6 +1058,7 @@ int ObLogger::parse_check(const char *str,
         || OB_LOG_LEVEL_INVALID == ret) {
       _LOG_WARN("invalid log_level=%s, ret=%d", str + valid_length, ret);
     } else if (OB_INVALID_ARGUMENT == ret) {
+      LOG_WARN("invalid argument", K(ret));
     } else {
       //do nothing
     }
@@ -1094,6 +1105,7 @@ int ObLogger::setting_list_processing(ObLogIdLevelMap &id_level_map, void *mod_s
   ModSetting mod_set;
   if (OB_ISNULL(mod_setting_list)) {
     ret = OB_INVALID_ARGUMENT;
+    LOG_WARN("Mod setting list should not be NULL", K(ret));
   } else {
     ObList<ModSetting> *list = static_cast<ObList<ModSetting> *>(mod_setting_list);
     for (; OB_SUCC(ret) && list->size() > 0;) {
@@ -1143,6 +1155,7 @@ int ObLogger::level_str2int(const char *level_name, int8_t &level_int, bool is_a
   int ret = OB_SUCCESS;
   if (OB_ISNULL(level_name)) {
     ret = OB_INVALID_ARGUMENT;
+    LOG_WARN("Invalid argument", K(ret), KCSTRING(level_name));
   } else {
     bool find_level = false;
     int8_t level_num = sizeof(errstr_) / sizeof(char *);
@@ -1154,6 +1167,7 @@ int ObLogger::level_str2int(const char *level_name, int8_t &level_int, bool is_a
     }//end of for
     if (!find_level) {
       ret = OB_LOG_LEVEL_INVALID;
+      LOG_WARN("Invalid log level", K(ret));
     } else if (OB_LOG_LEVEL_INFO == level_int && info_as_wdiag_ && !is_alert_log) {
       level_int = OB_LOG_LEVEL_WARN;
     }
@@ -1766,23 +1780,7 @@ void ObLogger::issue_dba_error(const int errcode, const char *file, const int li
                       "[suggestion] You can seek help from official technical personnel.");
 }
 
-bool OB_WEAK_SYMBOL ObLogger::need_to_print(const int32_t level)
-{
-  return (level <= get_log_level());
-}
-
-bool OB_WEAK_SYMBOL ObLogger::need_to_print(const uint64_t par_mod_id, const int32_t level)
-{
-  return (level <= get_log_level(par_mod_id));
-}
-
-bool OB_WEAK_SYMBOL ObLogger::need_to_print(const uint64_t par_mod_id, const uint64_t sub_mod_id,
-                             const int32_t level)
-{
-  return (level <= get_log_level(par_mod_id, sub_mod_id));
-}
-
-bool OB_WEAK_SYMBOL ObLogger::need_to_print_dba(const int32_t level, bool force)
+bool ObLogger::need_to_print_dba(const int32_t level, bool force)
 {
   static thread_local ObCurTraceId::TraceId dba_log_trace_id[OB_LOG_LEVEL_DBA_WARN + 1];
   static thread_local int64_t dba_log_count[OB_LOG_LEVEL_DBA_WARN + 1];
