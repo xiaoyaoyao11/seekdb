@@ -201,7 +201,7 @@ def validate_expected_outputs(expected_outputs):
     raise RuntimeError(
         'inner-table generator output set changed; update the Bazel declaration:\n'
         + '\n'.join(diff))
-
+  
 def print_method_start(table_name):
   global cpp_f
   head = """int ObInnerTableSchema::{0}_schema(ObTableSchema &table_schema)
@@ -1379,7 +1379,7 @@ def generate_sqlite_virtual_table_registration(f):
   f.write('\n  // All SQLite virtual tables are defined in ob_all_virtual_sqlite_tables.h\n')
   f.write('  // Include it in ob_virtual_table_iterator_factory.cpp:\n')
   f.write('  // (sqlite virtual tables header is pulled in by the factory cpp, not here)\n\n')
-
+  
   # Use BEGIN_CREATE_VT_ITER_SWITCH_LAMBDA and END_CREATE_VT_ITER_SWITCH_LAMBDA macros
   f.write('  BEGIN_CREATE_VT_ITER_SWITCH_LAMBDA\n')
   
@@ -2348,7 +2348,7 @@ def gen_sqlite_table_def(table_name, columns, primary_key):
   - table_name: SQLite table name (e.g., '__all_merge_info')
   - columns: Column definition list, format: [('col_name', 'sqlite_type', 'nullable', 'default'), ...]
   - primary_key: Primary key column list, e.g., ['zone']
-
+  
   Returns:
   - SQLite table definition keywords (registered to all_def_keywords)
   """
@@ -2475,7 +2475,7 @@ def gen_sqlite_virtual_table_def(table_id, table_name, keywords):
   kw['base_def_keywords'] = keywords
   # SQLite virtual table is system-only.
   kw['in_runtime_space'] = False
-
+  
   # Set owner
   kw['owner'] = 'nijia.nj'
   

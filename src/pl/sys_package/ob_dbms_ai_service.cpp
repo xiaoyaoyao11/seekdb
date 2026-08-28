@@ -168,7 +168,7 @@ int ObDBMSAiService::alter_ai_model_endpoint(ObPLExecCtx &ctx, sql::ParamStore &
     }
   }
 
-  return ret;
+  return ret;  
 }
 
 int ObDBMSAiService::drop_ai_model_endpoint(ObPLExecCtx &ctx, sql::ParamStore &params, common::ObObj &result)
@@ -204,7 +204,7 @@ int ObDBMSAiService::drop_ai_model_endpoint(ObPLExecCtx &ctx, sql::ParamStore &p
 int ObDBMSAiService::precheck_version_and_param_count_(int expect_param_count, sql::ParamStore &params)
 {
   int ret = OB_SUCCESS;
-
+  
   if (expect_param_count != params.count()) {
     ret = OB_INVALID_ARGUMENT_NUM;
     LOG_WARN("invalid argument", K(ret), K(params.count()));
@@ -242,7 +242,7 @@ int ObDBMSAiService::create_ai_model(ObPLExecCtx &ctx, sql::ParamStore &params, 
 {
   int ret = OB_SUCCESS;
   ObString model_name;
-
+  
   ObSchemaGetterGuard schema_guard;
   const ObAiModelSchema *ai_model_schema = nullptr;
   query::ObIRootCommandService *root_commands =
@@ -309,7 +309,7 @@ int ObDBMSAiService::drop_ai_model(ObPLExecCtx &ctx, sql::ParamStore &params, co
 {
   int ret = OB_SUCCESS;
   ObString model_name;
-
+  
   ObSchemaGetterGuard schema_guard;
   const ObAiModelSchema *ai_model_schema = nullptr;
   query::ObIRootCommandService *root_commands =

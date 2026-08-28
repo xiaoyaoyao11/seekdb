@@ -150,7 +150,7 @@ int ObSNDDLMergeHelperV2::process_prepare_task(ObIDag *dag,
   ObArray<ObDDLKVHandle> frozen_ddl_kvs;
   const ObSSTable *first_major_sstable = nullptr;
   ObTabletMemberWrapper<ObTabletTableStore> table_store_wrapper;
-
+  
   ObTabletID target_tablet_id;
   ObWriteTabletParam *tablet_param = nullptr;
   ObDDLTabletContext::MergeCtx *merge_ctx = nullptr;
@@ -304,7 +304,7 @@ int ObSNDDLMergeHelperV2::merge_slice(ObIDag *dag,
                                      ObDDLTabletMergeDagParamV2 &merge_param,
                                      const int64_t start_slice_idx,
                                      const int64_t end_slice_idx)
-{
+{ 
   int ret = OB_SUCCESS;
   ObTabletHandle tablet_handle;
   ObArray<ObSSTable*> ddl_sstables;
@@ -344,14 +344,14 @@ int ObSNDDLMergeHelperV2::merge_slice(ObIDag *dag,
                                                                             ddl_sstable_iter,
                                                                             ddl_sstables))) {
     } else if (FALSE_IT(ddl_dump_table_cnt = ddl_sstables.count())) {
-    } else if (OB_FAIL(ObDDLMergeTaskUtils::get_ddl_tables_from_ddl_kvs(merge_ctx->ddl_kv_handles_,
-                                                   start_slice_idx,
+    } else if (OB_FAIL(ObDDLMergeTaskUtils::get_ddl_tables_from_ddl_kvs(merge_ctx->ddl_kv_handles_, 
+                                                   start_slice_idx, 
                                                    merge_param.for_major_ ? INT64_MAX : end_slice_idx,
                                                    ddl_sstables))) {
-    } else if (OB_FAIL(ObDDLMergeTaskUtils::get_sorted_meta_array(*tablet_handle.get_obj(),
-                                                                  ddl_param,
+    } else if (OB_FAIL(ObDDLMergeTaskUtils::get_sorted_meta_array(*tablet_handle.get_obj(), 
+                                                                  ddl_param, 
                                                                   tablet_param->storage_schema_,
-                                                                  ddl_sstables,
+                                                                  ddl_sstables, 
                                                                   tablet_handle.get_obj()->get_rowkey_read_info(),
                                                                   arena, tmp_metas))) {
     } else if (OB_FAIL(ObDDLMergeTaskUtils::check_idempodency(tmp_metas, sorted_metas, &write_stat))) {
@@ -535,7 +535,7 @@ int ObSNDDLMergeHelperV2::get_rec_scn(ObDDLTabletMergeDagParamV2 &merge_param)
 int ObSNDDLMergeHelperV2::assemble_sstable(ObDDLTabletMergeDagParamV2 &merge_param)
 {
   int ret = OB_SUCCESS;
-
+ 
   ObTabletID target_tablet_id;
   ObWriteTabletParam *tablet_param = nullptr;
   

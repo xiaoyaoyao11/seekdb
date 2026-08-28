@@ -20,7 +20,7 @@
 #include "share/rc/ob_server_runtime.h"
 #include "lib/utility/utility.h"
 #include "common/json_type/ob_json_common.h"
-
+ 
 using namespace oceanbase::common;
 using namespace oceanbase::sql;
 
@@ -112,7 +112,7 @@ int ObExprAIRerank::eval_ai_rerank(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &
     res.set_null();
   } else {
     ObEvalCtx::TempAllocGuard tmp_alloc_g(ctx);
-
+    
     MultimodeAlloctor temp_allocator(tmp_alloc_g.get_allocator());
     lib::ObMallocHookAttrGuard malloc_guard(lib::ObMemAttr(N_AI_RERANK));
     ObAIFuncExprInfo *info = nullptr;
@@ -169,7 +169,7 @@ int ObExprAIRerank::eval_ai_rerank(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &
       LOG_WARN("AI endpoint resolver is unavailable", K(ret));
     } else if (OB_FAIL(endpoint_resolver->resolve_by_model_name(
                    model_id, temp_allocator, resolved_endpoint))) {
-    }
+    } 
 
     if (OB_FAIL(ret)) {
     } else if (OB_NOT_NULL(arg_doc_key)) {
@@ -231,7 +231,7 @@ int ObExprAIRerank::eval_ai_rerank_with_doc_key(const ObExpr &expr, ObEvalCtx &c
     ObAIFuncModel model(allocator, info, endpoint_info);
     if (OB_FAIL(model.call_rerank(query, doc_array, result_array))) {
     } else if (OB_FAIL(sort_document_array_by_model_result(allocator, document_array, result_array, sorted_document_array))) {
-    }
+    } 
   }
   if (OB_SUCC(ret)) {
     ObString raw_str;
@@ -350,12 +350,12 @@ int ObExprAIRerank::construct_batch_document_array(ObIAllocator &allocator, ObJs
   return ret;
 }
 
-int ObExprAIRerank::inner_eval_ai_rerank(ObIAllocator &allocator,
-                                          const ObAIFuncExprInfo &info,
+int ObExprAIRerank::inner_eval_ai_rerank(ObIAllocator &allocator, 
+                                          const ObAIFuncExprInfo &info, 
                                           const share::ObAiModelEndpointInfo &endpoint_info,
-                                          ObArray<ObString> &header_array,
-                                          ObString &query,
-                                          ObJsonArray *document_array,
+                                          ObArray<ObString> &header_array, 
+                                          ObString &query, 
+                                          ObJsonArray *document_array, 
                                           ObJsonArray *&result_array)
 {
   INIT_SUCC(ret);

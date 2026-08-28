@@ -261,7 +261,7 @@ int ObDASHNSWScanIter::inner_init(ObDASIterParam &param)
         if (search_param_.similarity_threshold_ != 0) {
           if (OB_FAIL(ObDasVecScanUtils::get_distance_threshold_hnsw(
               *sort_ctdef_->sort_exprs_[0], search_param_.similarity_threshold_, distance_threshold_))) {
-          }
+          } 
         }
       }
     }
@@ -1217,7 +1217,7 @@ int ObDASHNSWScanIter::query_brute_force_distances(ObPluginVectorIndexAdaptor* a
                                          brute_vids, brute_cnt, dist_result.distances_inc, false))) {
     } else if (OB_FAIL(adaptor->vsag_query_vids(reinterpret_cast<float *>(const_cast<char*>(search_vec.ptr())),
                                            brute_vids, brute_cnt, dist_result.distances_snap, true))) {
-    }
+    } 
   }
 
   return ret;

@@ -888,8 +888,8 @@ int ObUniqueCheckingMergeTask::process()
       } else {
         ObDDLChecksumItem item;
         item.execution_id_ = param_->execution_id_;
-
-        item.table_id_ = param_->is_scan_index_ ? param_->index_schema_->get_table_id() :
+        
+        item.table_id_ = param_->is_scan_index_ ? param_->index_schema_->get_table_id() : 
         param_->data_table_schema_->get_table_id();
         item.tablet_id_ = param_->tablet_id_.id();
         item.ddl_task_id_ = param_->task_id_;
@@ -943,7 +943,7 @@ int ObGlobalUniqueIndexCallback::operator()(const int ret_code)
   arg.source_table_id_ = data_table_id_;
   arg.schema_version_ = schema_version_;
   arg.task_id_ = task_id_;
-
+  
 #ifdef ERRSIM
     if (OB_SUCC(ret)) {
       ret = OB_E(EventTable::EN_DDL_REPORT_LOCAL_BUILD_STATUS_FAIL) OB_SUCCESS;

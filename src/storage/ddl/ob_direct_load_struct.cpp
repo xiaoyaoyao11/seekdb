@@ -536,7 +536,7 @@ bool ObTabletDDLParam::is_valid() const
 ObDirectLoadSliceWriter::ObDirectLoadSliceWriter()
   : is_inited_(false), is_canceled_(false), start_seq_(), slice_idx_(0), merge_slice_idx_(0), tablet_direct_load_mgr_(nullptr),
     slice_store_(nullptr), meta_write_iter_(nullptr), row_iterator_(nullptr), 
-    allocator_(lib::ObLabel("SliceWriter"), OB_MALLOC_NORMAL_BLOCK_SIZE),
+    allocator_(lib::ObLabel("SliceWriter"), OB_MALLOC_NORMAL_BLOCK_SIZE), 
     lob_allocator_(nullptr), rowkey_lengths_()
 {
 }
@@ -2947,7 +2947,7 @@ int ObDDLTabletMergeDagParamV2::assign(const ObDDLTabletMergeDagParamV2 &merge_d
 }
 
 int ObDDLTabletMergeDagParamV2::get_tablet_param(ObTabletID &tablet_id,
-                                                 ObWriteTabletParam *&tablet_param) const
+                                                 ObWriteTabletParam *&tablet_param) const 
 {
   int ret = OB_SUCCESS;
   tablet_param =  nullptr;

@@ -1874,7 +1874,7 @@ int ObIOFaultDetector::record_timing_task(const int64_t first_id, const int64_t 
     ret = OB_ALLOCATE_MEMORY_FAILED;
     LOG_WARN("alloc RetryTask failed", K(ret));
   } else {
-
+    
     retry_task->io_info_.size_ = 4096;
     retry_task->io_info_.user_data_buf_ = nullptr;
     retry_task->io_info_.buf_ = nullptr;
@@ -1901,7 +1901,7 @@ int ObIOFaultDetector::set_detect_task_io_info_(
     ObIOInfo &io_info, const ObIOResult &result, const ObIORequest &req)
 {
   int ret = OB_SUCCESS;
-
+  
   io_info.timeout_us_ = result.timeout_us_;
   io_info.callback_ = nullptr;
   io_info.buf_ = result.buf_;

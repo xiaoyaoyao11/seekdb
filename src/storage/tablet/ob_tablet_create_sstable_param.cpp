@@ -668,7 +668,7 @@ int ObTabletCreateSSTableParam::init_for_fork(
     const share::SCN &max_end_scn)
 {
   int ret = OB_SUCCESS;
-
+  
   table_key_ = src_table_key;
   table_key_.tablet_id_ = dst_tablet_id;
   // For fork reuse: limit end_scn to max_end_scn (e.g., fork_snapshot_scn)
@@ -711,7 +711,7 @@ int ObTabletCreateSSTableParam::init_for_fork(
   is_meta_root_ = sstable_param.is_meta_root_;
   root_block_addr_.set_none_addr();
   data_block_macro_meta_addr_.set_none_addr();
-
+  
   data_index_tree_height_ = sstable_param.basic_meta_.data_index_tree_height_;
   recycle_version_ = sstable_param.basic_meta_.recycle_version_;
   

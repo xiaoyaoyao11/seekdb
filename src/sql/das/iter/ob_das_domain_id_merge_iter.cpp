@@ -454,8 +454,8 @@ int ObDASDomainIdMergeIter::init_rowkey_domain_scan_param(
     storage::ObTableScanParam &scan_param)
 {
   int ret = OB_SUCCESS;
-
-
+  
+  
   scan_param.key_ranges_.set_attr(ObMemAttr("SParamKR"));
   if (OB_UNLIKELY(!tablet_id.is_valid())) {
     ret = OB_INVALID_ARGUMENT;

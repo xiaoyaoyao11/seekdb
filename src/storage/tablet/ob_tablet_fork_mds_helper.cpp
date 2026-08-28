@@ -99,7 +99,7 @@ bool ObTabletForkMdsArg::is_valid() const
 
 void ObTabletForkMdsArg::reset()
 {
-
+  
   autoinc_seq_arg_.reset();
   truncate_arg_.destroy();
   allocator_.reset();

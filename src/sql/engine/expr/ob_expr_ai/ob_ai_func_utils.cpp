@@ -324,7 +324,7 @@ int ObOllamaUtils::ObOllamaComplete::set_config_json_format(common::ObIAllocator
     ObJsonString *json_str_obj = nullptr;
     if (OB_FAIL(ObAIFuncJsonUtils::get_json_string(allocator, json_str, json_str_obj))) {
     } else if (OB_FAIL(config->add("format", json_str_obj))) {
-    }
+    } 
   }
   return ret;
 }
@@ -597,7 +597,7 @@ int ObDashscopeUtils::ObDashscopeEmbed::get_body(common::ObIAllocator &allocator
       if (OB_ISNULL(dimensions_node)) {
         // do nothing
       } else if (OB_FAIL(config->rename_key("dimensions", "dimension"))) {
-      }
+      } 
       if (OB_SUCC(ret)) {
         if (OB_FAIL(body_obj->add("parameters", config))) {
         }
@@ -808,7 +808,7 @@ int ObSiliconflowUtils::ObSiliconflowRerank::parse_output(common::ObIAllocator &
 int ObAIFuncUtils::get_header(ObIAllocator &allocator, 
                               const ObAIFuncExprInfo &info,
                               const share::ObAiModelEndpointInfo &endpoint_info,
-                              ObArray<ObString> &headers)
+                              ObArray<ObString> &headers) 
 {
   int ret = OB_SUCCESS;
   ObString unencrypted_access_key;
@@ -832,11 +832,11 @@ int ObAIFuncUtils::get_header(ObIAllocator &allocator,
   return ret;
 }
 
-int ObAIFuncUtils::get_complete_body(ObIAllocator &allocator,
-                                    const ObAIFuncExprInfo &info,
+int ObAIFuncUtils::get_complete_body(ObIAllocator &allocator, 
+                                    const ObAIFuncExprInfo &info, 
                                     const share::ObAiModelEndpointInfo &endpoint_info,
-                                    ObString &prompt,
-                                    ObString &content,
+                                    ObString &prompt, 
+                                    ObString &content, 
                                     ObJsonObject *config,
                                     ObJsonObject *&body) 
 {
@@ -859,14 +859,14 @@ int ObAIFuncUtils::set_json_format_config(ObIAllocator &allocator, const ObStrin
   ObAIFuncIComplete *complete_provider = nullptr;
   if (OB_FAIL(get_complete_provider(allocator, provider, complete_provider))) {
   } else if (OB_FAIL(complete_provider->set_config_json_format(allocator, config))) {
-  }
+  } 
   return ret;
 }
 
-int ObAIFuncUtils::get_embed_body(ObIAllocator &allocator,
-                                  const ObAIFuncExprInfo &info,
+int ObAIFuncUtils::get_embed_body(ObIAllocator &allocator, 
+                                  const ObAIFuncExprInfo &info, 
                                   const share::ObAiModelEndpointInfo &endpoint_info,
-                                  ObArray<ObString> &contents,
+                                  ObArray<ObString> &contents, 
                                   ObJsonObject *config,
                                   ObJsonObject *&body) 
 {
@@ -904,7 +904,7 @@ int ObAIFuncUtils::get_rerank_body(ObIAllocator &allocator,
   return ret;
 }
 
-int ObAIFuncUtils::parse_complete_output(ObIAllocator &allocator,
+int ObAIFuncUtils::parse_complete_output(ObIAllocator &allocator, 
                                         const share::ObAiModelEndpointInfo &endpoint_info,
                                         ObJsonObject *http_response,
                                         ObIJsonBase *&result)                                                 
@@ -917,7 +917,7 @@ int ObAIFuncUtils::parse_complete_output(ObIAllocator &allocator,
   return ret;
 }
 
-int ObAIFuncUtils::parse_embed_output(ObIAllocator &allocator,
+int ObAIFuncUtils::parse_embed_output(ObIAllocator &allocator, 
                                       const share::ObAiModelEndpointInfo &endpoint_info,
                                       ObJsonObject *http_response,
                                       ObIJsonBase *&result) 
@@ -930,7 +930,7 @@ int ObAIFuncUtils::parse_embed_output(ObIAllocator &allocator,
   return ret;
 }
 
-int ObAIFuncUtils::parse_rerank_output(ObIAllocator &allocator,
+int ObAIFuncUtils::parse_rerank_output(ObIAllocator &allocator, 
                                        const share::ObAiModelEndpointInfo &endpoint_info,
                                        ObJsonObject *http_response,
                                        ObIJsonBase *&result) 
@@ -1353,7 +1353,7 @@ int ObAIFuncUtils::get_ai_func_info(ObIAllocator &allocator, const ObString &mod
   int ret = OB_SUCCESS;
   share::schema::ObMultiVersionSchemaService *schema_service = GCTX.schema_service_;
   share::schema::ObSchemaGetterGuard guard;
-
+  
   if (OB_ISNULL(schema_service)) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("schema service is null", KR(ret));

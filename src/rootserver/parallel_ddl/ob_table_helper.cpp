@@ -574,7 +574,7 @@ int ObTableHelper::inner_generate_table_schema_(const ObCreateTableArg &arg, ObT
   // generate constraints
   for (int64_t i = 0; OB_SUCC(ret) && i < cst_cnt; i++) {
     ObConstraint &cst = const_cast<ObConstraint &>(constraints.at(i));
-
+    
     cst.set_table_id(new_table.get_table_id());
     if (OB_FAIL(id_generator.next(object_id))) {
     } else if (FALSE_IT(cst.set_constraint_id(object_id))) {

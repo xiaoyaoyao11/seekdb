@@ -1,18 +1,12 @@
 #!/usr/bin/env bash
-# Run one mysqltest slice directly against seekdb.
-# Required env: GITHUB_WORKSPACE, SEEKDB_TASK_DIR, SEEKDB_BINARY, SLICE_IDX, SLICES
-# Optional: SEEKDB_RUNTIME_DIR, MYSQLTEST_PORT
-set -euo pipefail
+# Run one mysqltest slice (slice index from SLICE_IDX).
+# Required env: GITHUB_WORKSPACE, SEEKDB_TASK_DIR, SLICE_IDX, SLICES, BRANCH
+# Optional: FORWARDING_HOST
+set -e
 
 WORKSPACE="${GITHUB_WORKSPACE:?}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TASK_DIR="${SEEKDB_TASK_DIR:?}"
-SLICE_IDX="${SLICE_IDX:-0}"
-SLICES="${SLICES:-4}"
-RUNTIME_DIR="${SEEKDB_RUNTIME_DIR:-$WORKSPACE/.seekdb_runtime}"
-SEEKDB_BINARY="${SEEKDB_BINARY:?}"
-CLIENT_ROOT="$RUNTIME_DIR/obclient"
-PORT="${MYSQLTEST_PORT:-$((5000 + SLICE_IDX * 100))}"
+SCRIPTS_DIR="$SCRIPT_DIR/scripts"
 
 export GITHUB_WORKSPACE="$WORKSPACE"
 export SEEKDB_TASK_DIR="${SEEKDB_TASK_DIR:?}"

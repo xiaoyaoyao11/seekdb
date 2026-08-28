@@ -116,9 +116,9 @@ int ObForkSnapshotRowScan::construct_access_param(const ObForkScanParam &param)
   } else {
     const ObTabletID &tablet_id = param.tablet_handle_.get_obj()->get_tablet_meta().tablet_id_;
     if (OB_FAIL(access_param_.init_merge_param(
-          param.table_id_,
-          tablet_id,
-          *rowkey_read_info_,
+          param.table_id_, 
+          tablet_id, 
+          *rowkey_read_info_, 
           true/*is_multi_version_minor_merge*/))) {
     }
   }
@@ -159,10 +159,10 @@ int ObForkSnapshotRowScan::construct_access_ctx(
                                           INT64_MAX, // query_expire_ts
                                           -1, // lock_timeout_us
                                           snapshot_scn))) {
-    } else if (OB_FAIL(access_ctx_.init(query_flag,
-                                        ctx_,
-                                        allocator_,
-                                        allocator_,
+    } else if (OB_FAIL(access_ctx_.init(query_flag, 
+                                        ctx_, 
+                                        allocator_, 
+                                        allocator_, 
                                         trans_version_range))) {
     }
   }
@@ -685,7 +685,7 @@ int ObTabletForkDag::fill_info_param(compaction::ObIBasicInfoParam *&out_param, 
   if (OB_UNLIKELY(!is_inited_)) {
     ret = OB_NOT_INIT;
     LOG_WARN("ObTabletForkDag has not been initialized", K(ret));
-  } else if (OB_FAIL(ADD_DAG_WARN_INFO_PARAM(out_param, allocator, get_type(),
+  } else if (OB_FAIL(ADD_DAG_WARN_INFO_PARAM(out_param, allocator, get_type(), 
       static_cast<int64_t>(param_.source_tablet_id_.id())))) {
   }
   return ret;
@@ -700,7 +700,7 @@ int ObTabletForkDag::fill_dag_key(char *buf, const int64_t buf_len) const
   } else if (OB_UNLIKELY(!param_.is_valid())) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid param", K(ret), K(param_));
-  } else if (OB_FAIL(databuff_printf(buf, buf_len,
+  } else if (OB_FAIL(databuff_printf(buf, buf_len, 
       "Fork table: src_tablet_id=%ld, dst_tablet_id=%ld, fork_snapshot_version=%ld, schema_version=%ld",
       param_.source_tablet_id_.id(), param_.dest_tablet_id_.id(), param_.fork_snapshot_version_,
       param_.schema_version_))) {
@@ -1032,7 +1032,7 @@ int ObTabletForkRewriteTask::prepare_macro_block_writer(
     } else {
       void *buf = nullptr;
       ObPreWarmerParam pre_warm_param;
-
+      
       if (OB_ISNULL(buf = allocator_.alloc(sizeof(ObMacroBlockWriter)))) {
         ret = OB_ALLOCATE_MEMORY_FAILED;
         LOG_WARN("alloc mem failed", K(ret));
@@ -1042,8 +1042,8 @@ int ObTabletForkRewriteTask::prepare_macro_block_writer(
         ObMacroSeqParam macro_seq_param;
         macro_seq_param.seq_type_ = ObMacroSeqParam::SEQ_TYPE_INC;
         macro_seq_param.start_ = macro_start_seq.macro_data_seq_;
-
-        if (OB_FAIL(macro_block_writer->open(data_desc.get_desc(),
+        
+        if (OB_FAIL(macro_block_writer->open(data_desc.get_desc(), 
              macro_start_seq.get_parallel_idx(), macro_seq_param, pre_warm_param))) {
         }
       }
@@ -1077,7 +1077,7 @@ int ObTabletForkRewriteTask::process_rewrite_sstable_task(
         context_->src_tablet_handle_,
         whole_range,
         clipped_storage_schema);
-
+    
     if (OB_FAIL(row_scan.init(scan_param, *sstable_, param_->fork_snapshot_version_))) {
     } else {
       const ObDatumRow *row = nullptr;
@@ -1342,7 +1342,7 @@ int ObTabletForkMergeTask::update_table_store_with_batch_tables(
     }
     param.tablet_fork_param_.clog_checkpoint_scn_ = clog_checkpoint_scn;
     param.tablet_fork_param_.mds_checkpoint_scn_ = mds_checkpoint_scn;
-
+    
     if (OB_FAIL(ls->build_tablet_with_batch_tables(dst_tablet_id, param))) {
     } else {
       LOG_INFO("fork table: updated tablet table store with batch sstables", KPC_(param), K(dst_tablet_id),
@@ -1552,7 +1552,7 @@ int ObTabletForkUtil::freeze_tablet(
 {
   int ret = OB_SUCCESS;
   ObMemstoreFreezer *memstore_freezer = ::oceanbase::share::server_service<::oceanbase::storage::ObMemstoreFreezer>();
-
+  
   if (OB_ISNULL(memstore_freezer)) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("ObMemstoreFreezer is null", K(ret));
@@ -1565,7 +1565,7 @@ int ObTabletForkUtil::freeze_tablet(
     const int64_t max_retry_time_us = 0; // Not used for sync freeze
     const bool need_rewrite_tablet_meta = false;
     const ObFreezeSourceFlag source = ObFreezeSourceFlag::FREEZE_TRIGGER;
-
+    
     if (OB_FAIL(memstore_freezer->tablet_freeze(tablet_id,
                                               is_sync,
                                               max_retry_time_us,

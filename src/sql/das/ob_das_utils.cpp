@@ -56,7 +56,7 @@ int ObDASUtils::check_nested_sql_mutating(ObTableID ref_table_id, ObExecContext 
           && !table_loc->is_fk_check_ ) {
         ObSchemaGetterGuard schema_guard;
         const ObTableSchema *table_schema = NULL;
-
+        
         if (OB_FAIL(GCTX.schema_service_->get_runtime_schema_guard(schema_guard))) {
         } else if (OB_FAIL(schema_guard.get_table_schema( ref_table_id, table_schema))) {
         } else if (table_schema != nullptr) {

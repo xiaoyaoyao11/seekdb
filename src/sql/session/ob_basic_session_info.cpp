@@ -57,7 +57,7 @@ const int64_t ObBasicSessionInfo::ESSENTIAL_SYS_VARS_COUNT =
 ObBasicSessionInfo::SysVarsCacheData ObBasicSessionInfo::SysVarsCache::base_data_;
 
 ObBasicSessionInfo::ObBasicSessionInfo()
-  :
+  :   
       query_mutex_(common::ObLatchIds::SESSION_QUERY_LOCK),
       thread_data_mutex_(common::ObLatchIds::SESSION_THREAD_DATA_LOCK),
       is_valid_(true),
@@ -226,7 +226,7 @@ int ObBasicSessionInfo::init(uint32_t sessid,
   } else if (OB_FAIL(set_session_state(SESSION_INIT))) {
   } else {
     sessid_ = sessid;
-
+    
     if (OB_ISNULL(tz_info)) {
       ObTZMapWrap tz_map_wrap;
       if (OB_FAIL(OTTZ_MGR.get_timezone_map(tz_map_wrap))) {
@@ -492,8 +492,8 @@ int ObBasicSessionInfo::init_runtime(const ObString &runtime_name)
     if (OB_FAIL(OTTZ_MGR.get_timezone_map(tz_map_wrap))) {
     } else {
       tz_info_wrap_.set_tz_info_map(tz_map_wrap.get_tz_map());
-
-
+      
+      
     }
   }
   return ret;
@@ -909,7 +909,7 @@ int ObBasicSessionInfo::update_query_sensitive_system_variable(ObSchemaGetterGua
   const ObSysVarSchema *sysvar = NULL;
   int64_t schema_version = -1;
   const ObSimpleSysVariableSchema *sys_variable_schema = NULL;
-
+  
   int64_t refreshed_schema_version = OB_INVALID_VERSION;
   ObSQLSessionInfo *session = static_cast<ObSQLSessionInfo *>(this);
   if (session->is_inner() && !session->is_user_session()) {
@@ -1004,7 +1004,7 @@ int ObBasicSessionInfo::init_essential_system_variables_by_id(const bool print_i
   for (int64_t i = 0; OB_SUCC(ret) && i < ESSENTIAL_SYS_VARS_COUNT; ++i) {
     ObSysVarClassType sys_var_id = ESSENTIAL_SYS_VARS[i];
     int64_t store_idx = -1;
-
+    
     if (OB_FAIL(share::ObSysVarMeta::calc_sys_var_store_idx(sys_var_id, store_idx))) {
       LOG_WARN("fail to calc sys var store idx", K(ret), K(sys_var_id), K(i));
       continue;
@@ -5244,8 +5244,8 @@ int ObBasicSessionInfo::ensure_sys_var_loaded(const ObSysVarClassType sys_var_id
     if (OB_FAIL(mutable_this->apply_server_runtime_default(sys_var_id, value))) {
     } else if (OB_FAIL(mutable_this->load_sys_variable_fast(calc_buf, sys_var_id,
                                                             type, value, min_val, max_val, var_flag, false))) {
-    }
-
+    } 
+    
     if (OB_NOT_NULL(mutable_this->sys_vars_[store_idx]) &&
         mutable_this->sys_vars_[store_idx]->is_influence_plan()) {
       if (OB_FAIL(mutable_this->influence_plan_var_indexs_.push_back(store_idx))) {

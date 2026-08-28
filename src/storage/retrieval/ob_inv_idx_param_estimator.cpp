@@ -105,7 +105,7 @@ int ObTextAvgDocLenEstimator::cast_number_to_double(const number::ObNumber &num,
   result = 0.0;
   ObObj src_obj, dest_obj;
   src_obj.set_number(num);
-
+  
   ObArenaAllocator alloc("TxtNum2Dbl", OB_MALLOC_NORMAL_BLOCK_SIZE);
   ObCastCtx cast_ctx(&alloc, nullptr, CM_NONE, ObCharset::get_system_collation());
   if (OB_FAIL(ObObjCaster::to_type(ObDoubleType, cast_ctx, src_obj, dest_obj))) {

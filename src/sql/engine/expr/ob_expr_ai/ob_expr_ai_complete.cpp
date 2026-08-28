@@ -99,7 +99,7 @@ int ObExprAIComplete::eval_ai_complete(const ObExpr &expr,
     res.set_null();
   } else {
     ObEvalCtx::TempAllocGuard tmp_alloc_g(ctx);
-
+    
     MultimodeAlloctor temp_allocator(tmp_alloc_g.get_allocator());
     lib::ObMallocHookAttrGuard malloc_guard(lib::ObMemAttr(N_AI_COMPLETE));
     ObAIFuncExprInfo *info = nullptr;

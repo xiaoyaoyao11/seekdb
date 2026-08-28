@@ -360,7 +360,7 @@ int ObDasVecScanUtils::init_scan_param(const common::ObTabletID &tablet_id,
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("unexpected null", K(ret), K(ctdef), K(rtdef));
   } else {
-
+    
     scan_param.tx_lock_timeout_ = rtdef->tx_lock_timeout_;
     scan_param.index_id_ = ctdef->ref_table_id_;
     scan_param.is_get_ = is_get;

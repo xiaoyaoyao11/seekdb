@@ -20,7 +20,8 @@ echo "[compile.sh] build.sh: -f=$([[ -f "$WORKSPACE/build.sh" ]] && echo 1 || ec
 
 export GITHUB_WORKSPACE="$WORKSPACE"
 export SEEKDB_TASK_DIR="$TASK_DIR"
-export PACKAGE_TYPE="${PACKAGE_TYPE:-release}"
+export PACKAGE_TYPE="${RELEASE_MODE:+release}"
+export PACKAGE_TYPE="${PACKAGE_TYPE:-debug}"
 export MAKE="${MAKE:-make}"
 export MAKE_ARGS="${MAKE_ARGS:--j32}"
 export PATH="$WORKSPACE/deps/3rd/usr/local/oceanbase/devtools/bin:$PATH"
@@ -44,7 +45,7 @@ else
   [[ ${PIPESTATUS[0]} -ne 0 ]] && exit 1
   set +e
   command -v ccache >/dev/null 2>&1 && ccache -z || true
-  (cd "$WORKSPACE/$BUILD_DIR" && $MAKE $MAKE_ARGS seekdb) 2>&1 | tee "$TASK_DIR/compile.output"
+  (cd "$WORKSPACE/$BUILD_DIR" && $MAKE $MAKE_ARGS observer) 2>&1 | tee "$TASK_DIR/compile.output"
   compile_ret=${PIPESTATUS[0]}
   command -v ccache >/dev/null 2>&1 && ccache -s || true
   set -e

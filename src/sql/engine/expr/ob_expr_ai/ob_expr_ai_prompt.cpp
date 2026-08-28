@@ -90,7 +90,7 @@ int ObExprAIPrompt::eval_ai_prompt(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &
   ObJsonArray *args_array = NULL;
   ObJsonObject *prompt_object = NULL;
   ObEvalCtx::TempAllocGuard tmp_alloc_g(ctx);
-
+  
   MultimodeAlloctor tmp_allocator(tmp_alloc_g.get_allocator());
   lib::ObMallocHookAttrGuard malloc_guard(lib::ObMemAttr(N_AI_PROMPT));
 
