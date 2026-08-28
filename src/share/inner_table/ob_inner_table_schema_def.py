@@ -9313,6 +9313,12 @@ def_table_schema(
 """.replace("\n", " ")
 )
 
+# 21223: GV$OB_KVCACHE # removed (single-tenant GV/V collapse; use oceanbase.__all_virtual_kvcache_info)
+
+# 21224: V$OB_KVCACHE # removed (single-tenant GV/V collapse; use oceanbase.__all_virtual_kvcache_info)
+
+# 21225: GV$OB_TRANSACTION_WRITE_STATE # removed (single-tenant GV/V collapse; folded into V$OB_TRANSACTION_WRITE_STATE)
+
 def_table_schema(
   owner           = 'yanmu.ztl',
   table_name      = 'DBA_IND_SUBPARTITIONS',
