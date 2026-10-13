@@ -59,7 +59,7 @@ namespace share
 static const char *TELEMETRY_URL = "https://openwebapi.oceanbase.com/api/web/oceanbase/report";
 static const char *TELEMETRY_FILE_NAME = "run/telemetry.json";
 static const char *TELEMETRY_INSTANCE_ID_ENV_NAME = "SEEKDB_TELEMETRY_INSTANCE_ID";
-// v6 includes the persisted telemetry file creation time in the instance ID.
+// v6 persists the telemetry file creation time in createdAtUs.
 static const int64_t TELEMETRY_VERSION = 6;
 static const int64_t TELEMETRY_MACHINE_ID_BYTE_LENGTH = 16;
 static const int64_t TELEMETRY_MACHINE_ID_HEX_LENGTH = 2 * TELEMETRY_MACHINE_ID_BYTE_LENGTH;
@@ -307,8 +307,7 @@ int generate_telemetry_uuid(const char *machine_id,
                             const char *scope_id,
                             const int64_t scope_id_len,
                             char *uuid,
-                            const int64_t uuid_len,
-                            const int64_t created_at_us)
+                            const int64_t uuid_len)
 {
   int ret = OB_SUCCESS;
   unsigned int digest_len = 0;
@@ -322,12 +321,11 @@ int generate_telemetry_uuid(const char *machine_id,
                            + TELEMETRY_BASE_DIR_LENGTH_FIELD_SIZE
                            + common::OB_MAX_FILE_NAME_LENGTH
                            + TELEMETRY_SCOPE_ID_LENGTH_FIELD_SIZE
-                           + TELEMETRY_MACHINE_ID_BYTE_LENGTH
-                           + sizeof(uint64_t)] = {0};
+                           + TELEMETRY_MACHINE_ID_BYTE_LENGTH] = {0};
   unsigned char digest[SHA256_DIGEST_LENGTH] = {0};
   unsigned char uuid_bytes[TELEMETRY_MACHINE_ID_BYTE_LENGTH] = {0};
   if (OB_ISNULL(uuid) || uuid_len <= TELEMETRY_UUID_STRING_LENGTH
-      || !valid_scope_args || created_at_us < 0) {
+      || !valid_scope_args) {
     ret = OB_INVALID_ARGUMENT;
   } else {
     uuid[0] = '\0';
@@ -344,7 +342,6 @@ int generate_telemetry_uuid(const char *machine_id,
       // Freeze the derivation layout as:
       // app-id[16] || uint64_be(base-dir byte length) || canonical base-dir bytes
       // [|| uint64_be(16) || container-scope-id bytes[16]]
-      // [|| uint64_be(created-at-us)]. Zero creation time retains the old derivation.
       MEMCPY(hmac_input + input_pos, TELEMETRY_APP_ID, sizeof(TELEMETRY_APP_ID));
       input_pos += sizeof(TELEMETRY_APP_ID);
       const uint64_t path_len = static_cast<uint64_t>(normalized_base_dir_len);
@@ -364,13 +361,6 @@ int generate_telemetry_uuid(const char *machine_id,
         input_pos += TELEMETRY_SCOPE_ID_LENGTH_FIELD_SIZE;
         MEMCPY(hmac_input + input_pos, scope_id_bytes, sizeof(scope_id_bytes));
         input_pos += sizeof(scope_id_bytes);
-      }
-      if (created_at_us > 0) {
-        const uint64_t creation_time = static_cast<uint64_t>(created_at_us);
-        for (int64_t i = 0; i < static_cast<int64_t>(sizeof(creation_time)); ++i) {
-          hmac_input[input_pos++] = static_cast<unsigned char>(
-              creation_time >> (8 * (sizeof(creation_time) - i - 1)));
-        }
       }
 
       if (OB_ISNULL(HMAC(EVP_sha256(),
@@ -796,7 +786,6 @@ static bool is_telemetry_container_marker_present()
 #endif
 
 // These sources identify the container independently of its database directory.
-// The final instance ID additionally uses the persisted telemetry creation time.
 static int get_telemetry_container_scope_id(char *scope_id,
                                             const int64_t scope_id_size,
                                             int64_t &scope_id_len,
@@ -1097,7 +1086,7 @@ int get_host_hash(char *buf, const int64_t buf_len)
   return ret;
 }
 
-static int generate_id(char *id, const int64_t id_len, const int64_t created_at_us)
+static int generate_id(char *id, const int64_t id_len)
 {
   int ret = OB_SUCCESS;
   int64_t machine_id_len = 0;
@@ -1128,7 +1117,7 @@ static int generate_id(char *id, const int64_t id_len, const int64_t created_at_
   } else if (OB_SUCC(ret) && OB_FAIL(generate_telemetry_uuid(
       machine_id, machine_id_len, base_dir, base_dir_len,
       has_scope_id ? scope_id : nullptr, has_scope_id ? scope_id_len : 0,
-      id, id_len, created_at_us))) {
+      id, id_len))) {
   }
   MEMSET(machine_id, 0, sizeof(machine_id));
   MEMSET(base_dir, 0, sizeof(base_dir));
@@ -1177,7 +1166,7 @@ static int generate_telemetry_json(const char* reporter, const char* event_name,
   get_host_hash(host_hash, sizeof(host_hash));
   get_os_info(os_name, sizeof(os_name), os_version, sizeof(os_version));
   get_cpu_model(cpu_model, sizeof(cpu_model));
-  if (OB_FAIL(generate_id(id, sizeof(id), created_at_us))) {
+  if (OB_FAIL(generate_id(id, sizeof(id)))) {
   }
 
   // construct host
