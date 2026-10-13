@@ -102,3 +102,45 @@ select regexp_replace(v, 'a', 'x') as case_insensitive,
        regexp_substr(v, 'a', 1, 1, 'i') as matched_case_insensitive
   from utf8mb4_unicode_ci_regexp_test where id = 1;
 drop table utf8mb4_unicode_ci_regexp_test;
+
+# Session literals and regexp results inherit collation_connection.
+--disable_query_log
+set @saved_collation_connection = @@collation_connection;
+--enable_query_log
+set names utf8mb4 collate utf8mb4_unicode_ci;
+select @@collation_connection as connection_collation,
+       collation('Abc') as literal_collation,
+       regexp_replace('Abc', 'a', 'x') as replaced,
+       regexp_substr('中😀国', '😀') as matched;
+--disable_query_log
+set collation_connection = @saved_collation_connection;
+--enable_query_log
+
+# Database defaults propagate to tables and columns; explicit overrides win.
+--disable_warnings
+drop database if exists utf8mb4_unicode_ci_ddl;
+--enable_warnings
+create database utf8mb4_unicode_ci_ddl default character set utf8mb4 collate utf8mb4_unicode_ci;
+use utf8mb4_unicode_ci_ddl;
+create table inherited (v varchar(64), b varchar(64) collate utf8mb4_bin);
+select default_character_set_name, default_collation_name
+  from information_schema.schemata where schema_name = database();
+select table_collation from information_schema.tables
+  where table_schema = database() and table_name = 'inherited';
+select column_name, collation_name from information_schema.columns
+  where table_schema = database() and table_name = 'inherited' order by ordinal_position;
+
+# ALTER changes comparison semantics while preserving the stored UTF-8 bytes.
+create table converting (v varchar(64)) default charset = utf8mb4 collate = utf8mb4_general_ci;
+insert into converting values ('ß'), ('ss');
+select count(distinct v) as general_distinct from converting;
+alter table converting convert to character set utf8mb4 collate utf8mb4_unicode_ci;
+select count(distinct v) as unicode_distinct from converting;
+select table_collation from information_schema.tables
+  where table_schema = database() and table_name = 'converting';
+select column_name, collation_name from information_schema.columns
+  where table_schema = database() and table_name = 'converting' order by ordinal_position;
+select v, hex(v) as bytes from converting order by hex(v);
+
+use test;
+drop database utf8mb4_unicode_ci_ddl;

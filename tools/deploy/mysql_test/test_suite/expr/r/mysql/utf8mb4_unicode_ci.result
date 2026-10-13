@@ -126,3 +126,50 @@ from utf8mb4_unicode_ci_regexp_test where id = 1;
 case_insensitive	case_sensitive	matched_case_insensitive
 xbc	Abc	A
 drop table utf8mb4_unicode_ci_regexp_test;
+set names utf8mb4 collate utf8mb4_unicode_ci;
+select @@collation_connection as connection_collation,
+collation('Abc') as literal_collation,
+regexp_replace('Abc', 'a', 'x') as replaced,
+regexp_substr('中😀国', '😀') as matched;
+connection_collation	literal_collation	replaced	matched
+utf8mb4_unicode_ci	utf8mb4_unicode_ci	xbc	😀
+drop database if exists utf8mb4_unicode_ci_ddl;
+create database utf8mb4_unicode_ci_ddl default character set utf8mb4 collate utf8mb4_unicode_ci;
+use utf8mb4_unicode_ci_ddl;
+create table inherited (v varchar(64), b varchar(64) collate utf8mb4_bin);
+select default_character_set_name, default_collation_name
+from information_schema.schemata where schema_name = database();
+default_character_set_name	default_collation_name
+utf8mb4	utf8mb4_unicode_ci
+select table_collation from information_schema.tables
+where table_schema = database() and table_name = 'inherited';
+table_collation
+utf8mb4_unicode_ci
+select column_name, collation_name from information_schema.columns
+where table_schema = database() and table_name = 'inherited' order by ordinal_position;
+column_name	collation_name
+v	utf8mb4_unicode_ci
+b	utf8mb4_bin
+create table converting (v varchar(64)) default charset = utf8mb4 collate = utf8mb4_general_ci;
+insert into converting values ('ß'), ('ss');
+select count(distinct v) as general_distinct from converting;
+general_distinct
+2
+alter table converting convert to character set utf8mb4 collate utf8mb4_unicode_ci;
+select count(distinct v) as unicode_distinct from converting;
+unicode_distinct
+1
+select table_collation from information_schema.tables
+where table_schema = database() and table_name = 'converting';
+table_collation
+utf8mb4_unicode_ci
+select column_name, collation_name from information_schema.columns
+where table_schema = database() and table_name = 'converting' order by ordinal_position;
+column_name	collation_name
+v	utf8mb4_unicode_ci
+select v, hex(v) as bytes from converting order by hex(v);
+v	bytes
+ss	7373
+ß	C39F
+use test;
+drop database utf8mb4_unicode_ci_ddl;
