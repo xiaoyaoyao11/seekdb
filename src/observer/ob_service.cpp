@@ -187,13 +187,13 @@ int ObService::init(common::ObMySQLProxy &sql_proxy)
     FLOG_WARN("gctx not init", "gctx inited", gctx_.is_inited(), KR(ret));
   } else if (OB_FAIL(schema_updater_.init(gctx_.self_addr(), gctx_.schema_service_))) {
     FLOG_WARN("client_manager_.initialize failed", "self_addr", gctx_.self_addr(), KR(ret));
-  } else if (OB_ISNULL(GCTX.meta_db_pool_)) {
+  } else if (OB_ISNULL(GCTX.local_store_)) {
     ret = OB_NOT_INIT;
-  } else if (OB_FAIL(ObGlobalMergeTableOperator::init(*GCTX.meta_db_pool_))) {
+  } else if (OB_FAIL(ObGlobalMergeTableOperator::init(*GCTX.local_store_))) {
     FLOG_WARN("init global merge table operator failed", KR(ret));
-  } else if (OB_FAIL(ObColumnChecksumErrorOperator::init(*GCTX.meta_db_pool_))) {
+  } else if (OB_FAIL(ObColumnChecksumErrorOperator::init(*GCTX.local_store_))) {
     FLOG_WARN("init column checksum error operator failed", KR(ret));
-  } else if (OB_FAIL(ObTabletLocalChecksumOperator::init(GCTX.meta_db_pool_))) {
+  } else if (OB_FAIL(ObTabletLocalChecksumOperator::init(GCTX.local_store_))) {
     FLOG_WARN("init local tablet checksum operator failed", KR(ret));
   } else if (OB_FAIL(OB_TSC_TIMESTAMP.init())) {
     FLOG_WARN("init tsc timestamp failed", KR(ret));

@@ -857,7 +857,7 @@ int ObDDLUtil::get_index_table_batch_partition_names(
 }
 
 int ObDDLUtil::get_tablet_data_size(
-    ObSQLiteConnectionPool &meta_db_pool,
+    LocalStore &store,
     const common::ObTabletID &tablet_id,
     int64_t &data_size)
 {
@@ -867,7 +867,7 @@ int ObDDLUtil::get_tablet_data_size(
     ret = OB_INVALID_ARGUMENT;
   } else {
     ObTabletMetaTableStorage storage;
-    if (OB_FAIL(storage.init(&meta_db_pool))) {
+    if (OB_FAIL(storage.init(&store))) {
     } else if (OB_FAIL(storage.get_data_size(tablet_id, data_size))) {
     }
   }
@@ -875,7 +875,7 @@ int ObDDLUtil::get_tablet_data_size(
 }
 
 int ObDDLUtil::get_tablet_data_row_cnt(
-    ObSQLiteConnectionPool &meta_db_pool,
+    LocalStore &store,
     const common::ObTabletID &tablet_id,
     int64_t &data_row_cnt)
 {
@@ -885,7 +885,7 @@ int ObDDLUtil::get_tablet_data_row_cnt(
     ret = OB_INVALID_ARGUMENT;
   } else {
     ObTabletLocalChecksumTableStorage storage;
-    if (OB_FAIL(storage.init(&meta_db_pool))) {
+    if (OB_FAIL(storage.init(&store))) {
     } else if (OB_FAIL(storage.get_row_count(tablet_id, data_row_cnt))) {
     }
   }
@@ -1207,12 +1207,9 @@ int ObDDLUtil::get_temp_store_compress_type(const ObCompressorType schema_compr_
   return ret;
 }
 
-int ObDDLUtil::check_table_compaction_checksum_error(ObMultiVersionSchemaService &schema_service,
-                                                     common::ObISQLClient &sql_client,
-                                                     ObSQLiteConnectionPool &meta_db_pool,
+int ObDDLUtil::check_table_compaction_checksum_error(common::ObISQLClient &sql_client,
                                                      const uint64_t table_id)
 {
-  UNUSEDx(schema_service, meta_db_pool);
   int ret = OB_SUCCESS;
   if (OB_INVALID_ID == table_id) {
     ret = OB_INVALID_ARGUMENT;

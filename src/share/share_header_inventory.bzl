@@ -225,10 +225,9 @@ SHARE_PUBLIC_HEADER_ROOTS = [
     "server_snapshot/ob_server_snapshot_id.h",
     "session/ob_local_session_var.h",
     "statement/ob_stmt_type.h",
+    "storage/local_store.h",
     "storage/ob_admin_job_table_storage.h",
     "storage/ob_deadlock_event_history_table_storage.h",
-    "storage/ob_sqlite_connection.h",
-    "storage/ob_sqlite_connection_pool.h",
     "storage/ob_tablet_local_checksum_table_storage.h",
     "system_variable/ob_sys_var_class_type.h",
     "system_variable/ob_sys_var_meta.h",
@@ -385,8 +384,6 @@ SHARE_PRIVATE_HEADERS = [
     "schema/ob_schema_macro_define.h",
     "schema/ob_table_iter.h",
     "storage/ob_merge_info_table_storage.h",
-    "storage/ob_sqlite_table_schema.h",
-    "storage/ob_tablet_compaction_checksum_table_storage.h",
     "unit/ob_server_resource_config.h",
 ]
 

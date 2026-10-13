@@ -213,8 +213,6 @@ SHARE_UNITY_GROUPS = [
             "src/share/compaction/ob_compaction_timer_task_mgr.cpp",
             "src/share/compaction/ob_new_micro_info.cpp",
             "src/share/compaction/ob_tablet_check_info.cpp",
-            "src/share/storage/ob_sqlite_connection.cpp",
-            "src/share/storage/ob_sqlite_connection_pool.cpp",
             "src/share/storage/ob_deadlock_event_history_table_storage.cpp",
             "src/share/storage/ob_admin_job_table_storage.cpp",
             "src/share/storage/ob_tablet_local_checksum_table_storage.cpp",

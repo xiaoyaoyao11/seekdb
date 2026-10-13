@@ -12,13 +12,7 @@ if(WIN32)
   set(OPENSSL_INCLUDE_DIR "${OB_OPENSSL_DIR}/include")
   set(VCPKG_INCLUDE_DIR "${OB_VCPKG_DIR}/include")
   set(CURL_INCLUDE_DIR "${OB_VCPKG_DIR}/include")
-  # vcpkg puts sqlite3.h at include/sqlite3.h, but code uses <sqlite/sqlite3.h>
-  set(SQLITE_COMPAT_DIR "${CMAKE_BINARY_DIR}/compat_include")
-  file(MAKE_DIRECTORY "${SQLITE_COMPAT_DIR}/sqlite")
-  if(EXISTS "${OB_VCPKG_DIR}/include/sqlite3.h")
-    configure_file("${OB_VCPKG_DIR}/include/sqlite3.h"
-                   "${SQLITE_COMPAT_DIR}/sqlite/sqlite3.h" COPYONLY)
-  endif()
+
 endif()
 
 set(OB_HEADER_DEP_DIR "${DEP_DIR}")
@@ -46,7 +40,6 @@ target_include_directories(
   $<$<PLATFORM_ID:Windows>:${VCPKG_INCLUDE_DIR}>
   $<$<PLATFORM_ID:Windows>:${VCPKG_INCLUDE_DIR}/libxml2>
   $<$<PLATFORM_ID:Windows>:${CURL_INCLUDE_DIR}>
-  $<$<PLATFORM_ID:Windows>:${SQLITE_COMPAT_DIR}>
   $<$<PLATFORM_ID:Windows>:${OB_VSAG_DIR}/include>
   ${DEVTOOLS_DIR}
   ${DEVTOOLS_DIR}/include
@@ -332,7 +325,6 @@ if(WIN32)
     ${VCPKG_LIB_DIR}/icudt.lib
     ${VCPKG_LIB_DIR}/icuuc.lib
     ${VCPKG_LIB_DIR}/protobuf-c.lib
-    ${VCPKG_LIB_DIR}/sqlite3.lib
     ${VCPKG_LIB_DIR}/pthreadVC3.lib
     ws2_32 crypt32 bcrypt userenv wldap32 advapi32
     ${ARCH_LDFLAGS}
@@ -348,7 +340,6 @@ else()
     ${OBLIB_ABSEIL_LIST}
     ${DEP_DIR}/lib/libroaring.a
     $<$<STREQUAL:"${ARCHITECTURE}","x86_64">:${DEP_DIR}/lib/libunwind.a>
-    ${DEP_DIR}/lib/sqlite/libsqlite3.a
     ${DEP_DIR}/lib/libz.a
     ${DEP_DIR}/lib/libicui18n.a
     $<$<PLATFORM_ID:iOS>:${DEP_DIR}/lib/libicudata.a>

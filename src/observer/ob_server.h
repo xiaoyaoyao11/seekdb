@@ -29,7 +29,7 @@
 #include "share/config/ob_config_manager.h"
 
 #include "share/tablet/ob_tablet_table_operator.h"
-#include "share/storage/ob_sqlite_connection_pool.h"
+#include "share/storage/local_store.h"
 #include "sql/ob_sql.h"
 #include "sql/das/ob_data_access_service.h"
 #include "sql/engine/px/ob_ddl_slice_store.h"
@@ -446,8 +446,8 @@ private:
   // The PL Engine
   pl::ObPL pl_engine_;
 
-  // Shared SQLite connection pool for meta database (config and tablet_meta tables)
-  share::ObSQLiteConnectionPool meta_db_pool_;
+  // Shared process-local persistent store
+  share::LocalStore local_store_;
 
   // The Oceanbase partition table relating to
   share::ObTabletTableOperator tablet_operator_;

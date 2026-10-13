@@ -18,7 +18,6 @@
 
 #include "config_bridge.h"
 #include "config_checkers.h"
-#include "config.h"
 #ifndef _WIN32
 #include <unistd.h>
 #include "share/rc/ob_server_runtime.h"
@@ -116,15 +115,17 @@ using StandbyModule = standby::StandbyModule;
 int set_bootstrap_parameter(const char *name, const char *value)
 {
   int ret = OB_SUCCESS;
-  ConfigError error = {};
   if (nullptr == name || nullptr == value) {
     ret = OB_INVALID_ARGUMENT;
   } else if (!config::check_parameter(name, value)) {
     ret = OB_INVALID_CONFIG;
     LOG_ERROR("invalid startup parameter", K(ret), K(name), K(value));
-  } else if (0 != config_bootstrap_set(name, value, &error)) {
-    ret = OB_INVALID_CONFIG;
-    LOG_ERROR("invalid startup parameter", K(ret), K(name), "detail", error.message);
+  } else {
+    auto error = config::bootstrap_set(name, value);
+    if (!error.ok) {
+      ret = OB_INVALID_CONFIG;
+      LOG_ERROR("invalid startup parameter", K(ret), K(name), "detail", error.message.c_str());
+    }
   }
   return ret;
 }
@@ -654,7 +655,7 @@ int ObServer::init(const ObServerOptions &opts, const ObPLogWriterCfg &log_cfg)
   scramble_rand_.init(static_cast<uint64_t>(start_time_), static_cast<uint64_t>(start_time_ / 2));
 
   // Config loading can fail before the rest of the server is initialized.
-  // Start the log writer first so the offending config key and line are
+  // Start the log writer first so the offending config key is
   // recorded in observer.log.
   if (OB_FAIL(OB_LOGGER.init(log_cfg))) {
     LOG_ERROR("async log init error", KR(ret));
@@ -808,7 +809,7 @@ int ObServer::init(const ObServerOptions &opts, const ObPLogWriterCfg &log_cfg)
     }
     if (OB_SUCC(ret) && OB_FAIL(init_pl())) {
       LOG_ERROR("init pl failed", K(ret));
-    } else if (OB_FAIL(tablet_operator_.init(&meta_db_pool_))) {
+    } else if (OB_FAIL(tablet_operator_.init(&local_store_))) {
       LOG_ERROR("tablet table operator init failed", KR(ret));
     }
     if (OB_SUCC(ret) && OB_FAIL(init_autoincrement_service())) {
@@ -1104,6 +1105,9 @@ void ObServer::destroy()
     FLOG_INFO("begin to destroy io device");
     ObIODeviceWrapper::get_instance().destroy();
     FLOG_INFO("io device destroyed");
+
+    // Release local storage after all metadata users and their timers stop.
+    local_store_.destroy();
 
 #ifndef _WIN32
     if (clients_fd_ >= 0) {
@@ -1751,25 +1755,9 @@ int ObServer::init_config(const ObServerOptions &opts)
 {
   int ret = OB_SUCCESS;
 
-  // Initialize shared meta database connection pool first
-  // Create directory before opening database (handles both normal dir and symlink)
-  const char *meta_db_dir = "./store/sstable";
-  const char *meta_db_path = "./store/sstable/meta.db";
-
-  // Convert relative path to absolute path to ensure stability when working directory changes
-  char cwd[OB_MAX_FILE_NAME_LENGTH] = {0};
-  char abs_meta_db_path[OB_MAX_FILE_NAME_LENGTH] = {0};
-  if (nullptr == getcwd(cwd, sizeof(cwd))) {
-    ret = OB_ERR_UNEXPECTED;
-    LOG_ERROR("failed to get current working directory", K(ret));
-  } else {
-    snprintf(abs_meta_db_path, sizeof(abs_meta_db_path), "%s/%s", cwd, meta_db_path);
-  }
-
-  if (OB_FAIL(ret)) {
-  } else if (OB_FAIL(FileDirectoryUtils::create_full_path(meta_db_dir))) {
-  } else if (OB_FAIL(meta_db_pool_.init(abs_meta_db_path))) {
-  } else if (OB_FAIL(config_mgr_.init())) {
+  // All modules share one Rust-owned local store, opened before configuration.
+  if (OB_FAIL(local_store_.init("./store/local"))) {
+  } else if (OB_FAIL(config_mgr_.init(local_store_))) {
   } else if (OB_FAIL(config_mgr_.got_version())) {
   } else if (OB_FAIL(DATA_VERSION_MGR.init())) {
   } else if (OB_FAIL(DATA_VERSION_MGR.load_from_file())) {
@@ -2417,7 +2405,7 @@ int ObServer::init_global_context()
   gctx_.schema_service_ = &schema_service_;
   gctx_.config_mgr_ = &config_mgr_;
   gctx_.tablet_operator_ = &tablet_operator_;
-  gctx_.meta_db_pool_ = &meta_db_pool_;
+  gctx_.local_store_ = &local_store_;
   gctx_.sql_proxy_ = &sql_proxy_;
   gctx_.ddl_sql_proxy_ = &ddl_sql_proxy_;
   gctx_.self_addr_seq_.set_addr(self_addr_);

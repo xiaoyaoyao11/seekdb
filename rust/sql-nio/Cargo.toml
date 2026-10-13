@@ -15,8 +15,9 @@ too_many_arguments = "allow"
 [lib]
 name = "sql_nio"
 # staticlib -> libsql_nio.a for linking into C++ (the future ObSqlNio shell);
-# rlib      -> cargo test / Rust consumers.
+# rlib      -> Rust consumers.
 crate-type = ["staticlib", "rlib"]
+test = false
 
 [dependencies]
 # mio = epoll (Linux) / kqueue (macOS) / IOCP (Windows), no async runtime.
