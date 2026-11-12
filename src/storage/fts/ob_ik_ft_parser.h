@@ -18,6 +18,9 @@
 #define _OCEANBASE_STORAGE_FTS_OB_IK_FT_PARSER_H_
 
 #include "lib/allocator/ob_allocator.h"
+#include "lib/allocator/page_arena.h"
+#include "lib/container/ob_se_array.h"
+#include "lib/lock/ob_mutex.h"
 #include "storage/fts/dict/ob_ft_cache_container.h"
 #include "storage/fts/dict/ob_ft_dict.h"
 #include "storage/fts/dict/ob_ft_dict_def.h"
@@ -31,6 +34,35 @@ namespace storage
 {
 class ObFTDictHub;
 
+// Process wide cache of IK dictionaries. The dictionaries are immutable once
+// built (ObIKFTParser::should_read_newest_table() is always false), so they can
+// be shared by all parsers instead of being rebuilt for every tokenize call.
+class ObIKSharedDictCache
+{
+public:
+  static ObIKSharedDictCache &get_instance();
+  int get_dict(const ObFTDictDesc &desc, ObFTDictHub *hub, ObIFTDict *&dict);
+
+private:
+  struct Entry
+  {
+    Entry() : type_(0), charset_(0), collation_(0), dict_(nullptr) {}
+    int64_t type_;
+    int32_t charset_;
+    int32_t collation_;
+    ObIFTDict *dict_;
+  };
+
+  ObIKSharedDictCache() : alloc_(lib::ObMemAttr("IKDictCache")), lock_() {}
+  int find(const ObFTDictDesc &desc, ObIFTDict *&dict) const;
+  int create(const ObFTDictDesc &desc, ObFTDictHub *hub, ObIFTDict *&dict);
+
+private:
+  common::ObArenaAllocator alloc_;
+  lib::ObMutex lock_;
+  common::ObSEArray<Entry, 4> entries_;
+};
+
 class ObIKFTParser final : public ObITokenIterator
 {
 public:
@@ -41,9 +73,6 @@ public:
         ctx_(nullptr),
         hub_(hub),
         segmenters_(allocator_),
-        cache_main_(allocator),
-        cache_quan_(allocator),
-        cache_stop_(allocator),
         dict_main_(nullptr),
         dict_quan_(nullptr),
         dict_stop_(nullptr)
@@ -74,8 +103,6 @@ private:
 private:
   int init_dict(const ObFTParserParam &param);
 
-  int init_single_dict(ObFTDictDesc desc, ObFTCacheRangeContainer &container);
-
   int init_segmenter(const ObFTParserParam &param);
 
   int init_ctx(const ObFTParserParam &param);
@@ -83,10 +110,6 @@ private:
   void reset();
 
   bool should_read_newest_table() const;
-
-  int build_dict_from_cache(const ObFTDictDesc &desc,
-                            ObFTCacheRangeContainer &container,
-                            ObIFTDict *&dict);
 
 private:
   static constexpr int SEGMENT_LIMIT = 1000;
@@ -98,11 +121,7 @@ private:
   ObFTDictHub *hub_;
   ObList<ObIIKProcessor *, ObIAllocator> segmenters_;
 
-  // For now there's no change of dict in one query, so we can pin dict this level.
-  ObFTCacheRangeContainer cache_main_;
-  ObFTCacheRangeContainer cache_quan_;
-  ObFTCacheRangeContainer cache_stop_;
-
+  // Dictionaries are shared and immutable, see ObIKSharedDictCache.
   ObIFTDict *dict_main_;
   ObIFTDict *dict_quan_;
   ObIFTDict *dict_stop_;

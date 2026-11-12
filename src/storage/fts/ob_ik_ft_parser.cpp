@@ -40,6 +40,88 @@ namespace oceanbase
 {
 namespace storage
 {
+ObIKSharedDictCache &ObIKSharedDictCache::get_instance()
+{
+  static ObIKSharedDictCache instance;
+  return instance;
+}
+
+int ObIKSharedDictCache::find(const ObFTDictDesc &desc, ObIFTDict *&dict) const
+{
+  int ret = OB_SUCCESS;
+  dict = nullptr;
+  for (int64_t i = 0; OB_SUCC(ret) && i < entries_.count(); ++i) {
+    const Entry &entry = entries_.at(i);
+    if (entry.type_ == static_cast<int64_t>(desc.type_)
+        && entry.charset_ == static_cast<int32_t>(desc.charset_)
+        && entry.collation_ == static_cast<int32_t>(desc.coll_type_)) {
+      dict = entry.dict_;
+      break;
+    }
+  }
+  if (OB_ISNULL(dict)) {
+    ret = OB_ENTRY_NOT_EXIST;
+  }
+  return ret;
+}
+
+int ObIKSharedDictCache::create(const ObFTDictDesc &desc, ObFTDictHub *hub, ObIFTDict *&dict)
+{
+  int ret = OB_SUCCESS;
+  ObFTCacheRangeContainer *container = nullptr;
+  ObIFTDict *new_dict = nullptr;
+  dict = nullptr;
+  if (OB_ISNULL(hub)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_ISNULL(container = OB_NEWx(ObFTCacheRangeContainer, &alloc_, alloc_))) {
+    ret = OB_ALLOCATE_MEMORY_FAILED;
+  } else if (OB_FAIL(hub->load_cache(desc, *container))) {
+    if (OB_ENTRY_NOT_EXIST == ret) {
+      if (OB_FAIL(hub->build_cache(desc, *container))) {
+      }
+    }
+  }
+  if (OB_FAIL(ret)) {
+  } else if (OB_ISNULL(new_dict = OB_NEWx(ObFTRangeDict, &alloc_, alloc_, container, desc))) {
+    ret = OB_ALLOCATE_MEMORY_FAILED;
+  } else if (OB_FAIL(new_dict->init())) {
+    OB_DELETEx(ObIFTDict, &alloc_, new_dict);
+    new_dict = nullptr;
+  } else {
+    Entry entry;
+    entry.type_ = static_cast<int64_t>(desc.type_);
+    entry.charset_ = static_cast<int32_t>(desc.charset_);
+    entry.collation_ = static_cast<int32_t>(desc.coll_type_);
+    entry.dict_ = new_dict;
+    if (OB_FAIL(entries_.push_back(entry))) {
+      OB_DELETEx(ObIFTDict, &alloc_, new_dict);
+      new_dict = nullptr;
+    } else {
+      dict = new_dict;
+    }
+  }
+  return ret;
+}
+
+int ObIKSharedDictCache::get_dict(const ObFTDictDesc &desc, ObFTDictHub *hub, ObIFTDict *&dict)
+{
+  int ret = OB_SUCCESS;
+  dict = nullptr;
+  {
+    lib::ObMutexGuard guard(lock_);
+    if (OB_FAIL(find(desc, dict))) {
+      if (OB_ENTRY_NOT_EXIST != ret) {
+      } else {
+        ret = OB_SUCCESS;
+        dict = nullptr;
+        if (OB_FAIL(create(desc, hub, dict))) {
+        }
+      }
+    }
+  }
+  return ret;
+}
+
 int ObIKFTParser::init(const ObFTParserParam &param)
 {
   int ret = OB_SUCCESS;
@@ -237,7 +319,6 @@ int ObIKFTParser::init_dict(const ObFTParserParam &param)
     ret = OB_ERR_UNEXPECTED;
   }
 
-  ObFTRangeDict *dict = nullptr;
   ObFTDictDesc main_dict_desc("main_dict",
                               ObFTDictType::DICT_IK_MAIN,
                               ObCharsetType::CHARSET_UTF8MB4,
@@ -256,32 +337,13 @@ int ObIKFTParser::init_dict(const ObFTParserParam &param)
   if (should_read_newest_table()) {
     // clear dict cache, always false now
   } else {
-    if (OB_FAIL(init_single_dict(main_dict_desc, cache_main_))) {
-    } else if (OB_FAIL(init_single_dict(quan_dict_desc, cache_quan_))) {
-    } else if (OB_FAIL(init_single_dict(stopword_dict_desc, cache_stop_))) {
+    ObIKSharedDictCache &dict_cache = ObIKSharedDictCache::get_instance();
+    if (OB_FAIL(dict_cache.get_dict(main_dict_desc, hub_, dict_main_))) {
+    } else if (OB_FAIL(dict_cache.get_dict(quan_dict_desc, hub_, dict_quan_))) {
+    } else if (OB_FAIL(dict_cache.get_dict(stopword_dict_desc, hub_, dict_stop_))) {
     }
   }
 
-  if (OB_FAIL(ret)) {
-    // already logged.
-  } else if (OB_FAIL(build_dict_from_cache(main_dict_desc, cache_main_, dict_main_))) {
-  } else if (OB_FAIL(build_dict_from_cache(quan_dict_desc, cache_quan_, dict_quan_))) {
-  } else if (OB_FAIL(build_dict_from_cache(stopword_dict_desc, cache_stop_, dict_stop_))) {
-  }
-
-  return ret;
-}
-
-int ObIKFTParser::init_single_dict(ObFTDictDesc desc, ObFTCacheRangeContainer &container)
-{
-  int ret = OB_SUCCESS;
-  if (OB_FAIL(hub_->load_cache(desc, container))) {
-    if (OB_ENTRY_NOT_EXIST == ret) {
-      if (OB_FAIL(hub_->build_cache(desc, container))) {
-      }
-    } else {
-    }
-  }
   return ret;
 }
 
@@ -362,43 +424,15 @@ void ObIKFTParser::reset()
   }
   segmenters_.clear();
 
-  cache_main_.reset();
-  cache_quan_.reset();
-  cache_stop_.reset();
-
-  if (!OB_ISNULL(dict_main_)) {
-    dict_main_->~ObIFTDict();
-    allocator_.free(dict_main_);
-  }
-  if (!OB_ISNULL(dict_quan_)) {
-    dict_quan_->~ObIFTDict();
-    allocator_.free(dict_quan_);
-  }
-  if (!OB_ISNULL(dict_stop_)) {
-    dict_stop_->~ObIFTDict();
-    allocator_.free(dict_stop_);
-  }
+  // Dictionaries are owned by ObIKSharedDictCache, do not free them here.
+  dict_main_ = nullptr;
+  dict_quan_ = nullptr;
+  dict_stop_ = nullptr;
 
   is_inited_ = false;
 }
 
 bool ObIKFTParser::should_read_newest_table() const { return false; }
-int ObIKFTParser::build_dict_from_cache(const ObFTDictDesc &desc,
-                                        ObFTCacheRangeContainer &container,
-                                        ObIFTDict *&dict)
-{
-  int ret = OB_SUCCESS;
-  if (OB_ISNULL(hub_)) {
-    ret = OB_ERR_UNEXPECTED;
-  } else if (OB_ISNULL(dict = OB_NEWx(ObFTRangeDict, &allocator_, allocator_, &container, desc))) {
-    ret = OB_ALLOCATE_MEMORY_FAILED;
-  } else if (OB_FAIL(dict->init())) {
-  }
-  if (OB_FAIL(ret)) {
-    OB_DELETEx(ObIFTDict, &allocator_, dict);
-  }
-  return ret;
-}
 
 } //  namespace storage
 } //  namespace oceanbase
