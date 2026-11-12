@@ -29,6 +29,7 @@ namespace oceanbase
 namespace share
 {
 const ObString ObAiModelEndpointInfo::DEFAULT_SCOPE = "ALL";
+const char *ObAiModelEndpointInfo::OLLAMA_PROVIDER = "OLLAMA";
 
 const char *VALID_PROVIDERS[] = {
   "ALIYUN-OPENAI",
@@ -37,7 +38,8 @@ const char *VALID_PROVIDERS[] = {
   "SILICONFLOW",
   "COHERE",
   "HUNYUAN-OPENAI",
-  "OPENAI"
+  "OPENAI",
+  "OLLAMA"
 };
 
 #define EXTRACT_JSON_ELEM_STR(json_key, member) \
@@ -112,7 +114,7 @@ int ObAiModelEndpointInfo::check_valid() const
   } else if (url_.empty()) {
     ret = OB_AI_FUNC_PARAM_EMPTY;
     LOG_USER_ERROR(OB_AI_FUNC_PARAM_EMPTY, strlen("url"), "url");
-  } else if (access_key_.empty()) {
+  } else if (access_key_.empty() && !is_ollama_provider()) {
     ret = OB_AI_FUNC_PARAM_EMPTY;
     LOG_USER_ERROR(OB_AI_FUNC_PARAM_EMPTY, strlen("access_key"), "access_key");
     LOG_WARN("access_key is empty", K(ret), K(*this));
@@ -147,6 +149,11 @@ bool ObAiModelEndpointInfo::is_valid_provider(const ObString &provider)
   return is_valid;
 }
 
+bool ObAiModelEndpointInfo::is_ollama_provider() const
+{
+  return !provider_.empty() && provider_.case_compare(OLLAMA_PROVIDER) == 0;
+}
+
 int ObAiModelEndpointInfo::merge_delta_endpoint(common::ObArenaAllocator &allocator, const ObIJsonBase &delta_jbase)
 {
   int ret = OB_SUCCESS;
@@ -171,6 +178,12 @@ int ObAiModelEndpointInfo::merge_delta_endpoint(common::ObArenaAllocator &alloca
   }
 
   if (OB_SUCC(ret)) {
+    // An empty access key is a legal value for some providers (e.g. ollama).
+    // Keep it as an empty string instead of a null string so that the value
+    // stored in the inner table is not NULL.
+    if (OB_ISNULL(access_key_.ptr())) {
+      access_key_.assign_ptr("", 0);
+    }
     if (has_api_key && !access_key_.empty() && OB_FAIL(encrypt_access_key_(allocator, access_key_, access_key_))) {
       LOG_WARN("failed to encrypt access key", K(ret));
     } else if (OB_FAIL(check_valid())) {

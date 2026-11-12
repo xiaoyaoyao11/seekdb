@@ -67,6 +67,7 @@ public:
   const ObString &get_parameters() const { return parameters_; }
   const ObString &get_request_transform_fn() const { return request_transform_fn_; }
   const ObString &get_response_transform_fn() const { return response_transform_fn_; }
+  bool is_ollama_provider() const;
   uint64_t get_endpoint_id() const { return endpoint_id_; }
   void set_endpoint_id(uint64_t endpoint_id) { endpoint_id_ = endpoint_id; }
 
@@ -83,6 +84,7 @@ public:
                K_(response_transform_fn));
 private:
   static const ObString DEFAULT_SCOPE;
+  static const char *OLLAMA_PROVIDER;
   static bool is_valid_provider(const ObString &provider);
   int encrypt_access_key_(common::ObIAllocator &allocator, const ObString &access_key, ObString &encrypted_access_key);
   int decrypt_access_key_(common::ObIAllocator &allocator, const ObString &encrypted_access_key, ObString &unencrypted_access_key) const;

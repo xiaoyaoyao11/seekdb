@@ -361,6 +361,7 @@ public:
    // rerank
    int call_rerank(ObString &query, ObJsonArray *contents, ObJsonArray *&results);
  private:
+   static int check_embedding_array(ObJsonArray &embedding, const int64_t expect_dimension);
    bool is_completion_type() {return info_.type_ == share::EndpointType::COMPLETION;}
    bool is_dense_embedding_type() {return info_.type_ == share::EndpointType::DENSE_EMBEDDING;}
    bool is_rerank_type() {return info_.type_ == share::EndpointType::RERANK;}

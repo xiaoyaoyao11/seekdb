@@ -37,6 +37,11 @@ public:
   virtual int cg_expr(ObExprCGCtx &expr_cg_ctx, const ObRawExpr &raw_expr,
                   ObExpr &rt_expr) const override;
 private:
+  static int read_arg_string(ObEvalCtx &ctx,
+                             common::ObIAllocator &allocator,
+                             const ObExpr &arg,
+                             const ObDatum &datum,
+                             common::ObString &str);
   DISALLOW_COPY_AND_ASSIGN(ObExprAIPrompt);
 };
 
