@@ -1100,6 +1100,11 @@ def generate_essential_sys_vars_in_init_cpp(cpp_filename, list_sorted_by_id):
     "debug_sync",
     "ob_global_debug_sync",
     "wait_timeout",
+    # The file as database feature is gated by this session variable, the
+    # session has to know about it from the very beginning, otherwise
+    # "set session enable_file_sql = on" and "select @@session.enable_file_sql"
+    # fail with ER_UNKNOWN_SYSTEM_VARIABLE.
+    "enable_file_sql",
   ]
 
   essential_vars = []

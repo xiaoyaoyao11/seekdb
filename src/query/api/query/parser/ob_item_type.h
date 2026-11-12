@@ -2275,14 +2275,21 @@ typedef enum ObItemType
   T_DIFF_TABLE = 4918,
   T_MERGE_TABLE = 4919,
   T_FLUSH_PRIVILEGES = 4920,
-  T_AI_COLUMN_ATTR = 4921,
-  T_AI_COLUMN_OPTION = 4922,
-  T_FILE_TABLE_EXPRESSION = 4923,
-  T_FILE_TABLE_OPTION = 4924,
-  T_COPY_TO_FILE = 4925,
-  T_COPY_TO_FILE_OPTION = 4926,
-  T_COPY_TO_FILE_OPTION_LIST = 4927,
-  T_DESCRIBE_SELECT = 4928,
+  /* the AI COLUMN column attribute of the asynchronous AI column feature */
+  T_AI_COLUMN_ATTR = 4943,
+  T_AI_COLUMN_OPTION = 4944,
+  T_FILE_TABLE_EXPRESSION = 4921,
+  T_FILE_TABLE_NAMED_ARG = 4922,
+  /* DESCRIBE <select statement>, the DuckDB style schema description.  The
+   * value is chosen in the gap that is left free by the other file as
+   * database features so that concurrent additions cannot collide. */
+  T_DESCRIBE_SELECT_STMT = 4923,
+  /* the COPY statement of the file as database feature, the values are
+   * deliberately chosen far away from the ones that are in use so that
+   * the concurrent additions of the other features cannot collide */
+  T_COPY_STMT = 4940,
+  T_COPY_OPTIONS = 4941,
+  T_COPY_OPTION = 4942,
   T_MAX //Attention: add a new type before T_MAX
 } ObItemType;
 

@@ -43,6 +43,8 @@
 #include "sql/resolver/ddl/ob_drop_database_resolver.h"
 #include "sql/resolver/ddl/ob_create_view_resolver.h"
 #include "sql/resolver/ddl/ob_explain_resolver.h"
+#include "sql/resolver/ddl/ob_describe_select_resolver.h"
+#include "sql/resolver/dml/ob_copy_resolver.h"
 #include "sql/resolver/ddl/ob_create_outline_resolver.h"
 #include "sql/resolver/ddl/ob_alter_outline_resolver.h"
 #include "sql/resolver/ddl/ob_drop_outline_resolver.h"
@@ -477,20 +479,15 @@ int ObResolver::resolve(IsPrepared if_prepared, const ParseNode &parse_tree, ObS
         break;
       }
       case T_EXPLAIN: {
-        if (OB_SUCC(ret) && NULL != real_parse_tree->children_[0] &&
-            T_DESCRIBE_SELECT == real_parse_tree->children_[0]->type_ &&
-            NULL != real_parse_tree->children_[4] &&
-            T_SELECT == real_parse_tree->children_[4]->type_) {
-          ret = resolve_describe_select(*real_parse_tree->children_[4], stmt);
-        } else {
-          REGISTER_STMT_RESOLVER(Explain);
-        }
+        REGISTER_STMT_RESOLVER(Explain);
         break;
       }
-      case T_COPY_TO_FILE: {
-        if (OB_SUCC(ret)) {
-          ret = resolve_copy_to_file(*real_parse_tree, stmt);
-        }
+      case T_DESCRIBE_SELECT_STMT: {
+        REGISTER_STMT_RESOLVER(DescribeSelect);
+        break;
+      }
+      case T_COPY_STMT: {
+        REGISTER_STMT_RESOLVER(Copy);
         break;
       }
       case T_ALTER_SYSTEM_SET: {

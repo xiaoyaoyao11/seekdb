@@ -130,6 +130,83 @@ struct ObValuesTableDef {
                        K(access_type_), K(is_const_), K(column_types_));
 };
 
+/**
+ * The readers that can be used as a table source.
+ *
+ * The values are also produced by the parser, the grammar stores them in the
+ * parse node of a file table expression.
+ */
+enum ObFileTableFuncType
+{
+  OB_FILE_TABLE_CSV     = 0,
+  OB_FILE_TABLE_JSON    = 1,
+  OB_FILE_TABLE_NDJSON  = 2,
+  OB_FILE_TABLE_PARQUET = 3,
+  OB_FILE_TABLE_GLOB    = 4,
+};
+
+/**
+ * The column types that the file readers are allowed to infer.
+ *
+ * The values mirror the ColumnType enum of the file scan helpers.
+ */
+enum ObFileColumnType
+{
+  OB_FILE_COLUMN_NULL     = 0,
+  OB_FILE_COLUMN_BOOLEAN  = 1,
+  OB_FILE_COLUMN_BIGINT   = 2,
+  OB_FILE_COLUMN_DOUBLE   = 3,
+  OB_FILE_COLUMN_DATE     = 4,
+  OB_FILE_COLUMN_DATETIME = 5,
+  OB_FILE_COLUMN_VARCHAR  = 6,
+};
+
+/**
+ * The description of one column of a file table.
+ */
+struct ObFileTableColDef
+{
+  ObFileTableColDef()
+      : name_(), col_type_(OB_FILE_COLUMN_VARCHAR), nullable_(false), column_id_(common::OB_INVALID_ID) {}
+  common::ObString name_;
+  int32_t col_type_;
+  bool nullable_;
+  uint64_t column_id_;
+};
+
+/**
+ * The description of a file table.
+ *
+ * Unlike a normal table the schema of a file table is not described by the
+ * data dictionary but inferred from the content of the file, so the columns
+ * are collected while the statement is resolved.
+ */
+struct ObFileTableDef
+{
+  ObFileTableDef()
+      : func_type_(OB_FILE_TABLE_CSV),
+        path_(),
+        header_(true),
+        sample_size_(-1),
+        delimiter_(','),
+        quote_('"'),
+        column_cnt_(0),
+        row_cnt_(0),
+        all_cols_() {}
+  int deep_copy(const ObFileTableDef &other, ObIAllocator *allocator);
+  int32_t func_type_;
+  common::ObString path_;
+  bool header_;
+  int64_t sample_size_;
+  char delimiter_;
+  char quote_;
+  int64_t column_cnt_;
+  int64_t row_cnt_;
+  common::ObSEArray<ObFileTableColDef*, 8, common::ModulePageAllocator, true> all_cols_;
+  virtual TO_STRING_KV(K_(func_type_), K_(path_), K_(header_), K_(sample_size_),
+                       K_(delimiter_), K_(quote_), K_(column_cnt_), K_(row_cnt_));
+};
+
 struct TableItem
 {
   TableItem()
@@ -157,6 +234,7 @@ struct TableItem
     file_table_def_ = nullptr;
     table_type_ = MAX_TABLE_TYPE;
     values_table_def_ = NULL;
+    file_table_def_ = NULL;
     sample_info_ = nullptr;
   }
 
@@ -192,6 +270,7 @@ struct TableItem
     JSON_TABLE,
     VALUES_TABLE,
     LATERAL_TABLE,
+    FILE_TABLE,
   };
 
   /**
@@ -227,6 +306,7 @@ struct TableItem
   bool is_file_table() const { return FUNCTION_TABLE == type_ && NULL != file_table_def_; }
   bool is_json_table() const { return JSON_TABLE == type_; }  // json_table_def_->table_type_ == MulModeTableType::OB_ORA_JSON_TABLE_TYPE
   bool is_values_table() const { return VALUES_TABLE == type_; }//used to mark values statement: values row(1,2), row(3,4);
+  bool is_file_table() const { return FILE_TABLE == type_; }  // a table whose rows are read from a local file
 
   bool is_lateral_table() const { return LATERAL_TABLE == type_; }
   bool is_extended_all_or_user_sys_view() const
@@ -267,6 +347,8 @@ struct TableItem
   int deep_copy_values_table_def(const ObValuesTableDef& table_def,
                                  ObIRawExprCopier &expr_copier,
                                  ObIAllocator* allocator);
+  ObFileTableDef* get_file_table_def() { return file_table_def_; }
+  int deep_copy_file_table_def(const ObFileTableDef& table_def, ObIAllocator* allocator);
   virtual bool has_for_update() const { return for_update_; }
   // if real table id, it is valid for all threads,
   // else if generated id, it is unique just during the thread session
@@ -309,6 +391,8 @@ struct TableItem
   ObFileTableDef *file_table_def_;
   // values table
   ObValuesTableDef *values_table_def_;
+  // file table
+  ObFileTableDef *file_table_def_;
   // sample scan infos
   SampleInfo *sample_info_;
 };
