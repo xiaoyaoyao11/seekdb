@@ -1051,8 +1051,6 @@ int ObSelectResolver::resolve(const ParseNode &parse_tree)
       }
     }
   }
-  if (OB_SUCC(ret) && OB_FAIL(check_ai_column_strict_read(*select_stmt))) {
-  }
 
   return ret;
 }
