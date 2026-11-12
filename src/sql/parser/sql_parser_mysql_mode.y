@@ -356,6 +356,7 @@ END_P SET_VAR DELIMITER
         TIME_ZONE_INFO TOP_K_FRE_HIST TRIM_SPACE TABLETS TIME_UNIT TIME_ZONE
 
         UNCOMMITTED UNCONDITIONAL UNDEFINED UNNEST UNICODE UNLOCKED UNTIL UPGRADE
+        READ_CSV READ_JSON READ_NDJSON READ_PARQUET GLOB
         UNUSUAL UNKNOWN USE_FRM USER UNBOUNDED UNLIMITED USER_SPECIFIED
 
         VALID VALUE VARIANCE VARIABLES VERBOSE VERIFY VIEW VISIBLE VALIDATE VAR_POP
@@ -497,7 +498,7 @@ END_P SET_VAR DELIMITER
 %type <node> dynamic_sampling_hint
 %type <node> skip_index_type opt_skip_index_type_list
 %type <node> vec_index_params vec_index_param vec_index_param_value opt_with_vector_index_parameters
-%type <node> json_table_expr unnest_expr mock_jt_on_error_on_empty jt_column_list json_table_column_def
+%type <node> json_table_expr unnest_expr mock_jt_on_error_on_empty jt_column_list json_table_column_def file_table_expr
 %type <node> json_table_ordinality_column_def json_table_exists_column_def json_table_value_column_def json_table_nested_column_def
 %type <node> opt_value_on_empty_or_error_or_mismatch opt_on_mismatch
 %type <node> table_values_clause table_values_clause_with_order_by_and_limit values_row_list row_value
@@ -10848,6 +10849,10 @@ tbl_name
 {
   $$ = $1;
 }
+| file_table_expr
+{
+  $$ = $1;
+}
 ;
 
 tbl_name:
@@ -17451,6 +17456,148 @@ UNNEST '(' simple_expr_list ')'
 }
 ;
 
+file_table_expr:
+READ_CSV '(' file_table_arg_list ')' relation_name
+{
+  ParseNode *kind_node = NULL;
+  malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
+  kind_node->value_ = 0;
+  kind_node->is_hidden_const_ = 1;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, $5, NULL);
+}
+| READ_CSV '(' file_table_arg_list ')' AS relation_name
+{
+  ParseNode *kind_node = NULL;
+  malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
+  kind_node->value_ = 0;
+  kind_node->is_hidden_const_ = 1;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, $6, NULL);
+}
+| READ_CSV '(' file_table_arg_list ')'
+{
+  ParseNode *kind_node = NULL;
+  malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
+  kind_node->value_ = 0;
+  kind_node->is_hidden_const_ = 1;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, NULL, NULL);
+}
+|
+READ_JSON '(' file_table_arg_list ')' relation_name
+{
+  ParseNode *kind_node = NULL;
+  malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
+  kind_node->value_ = 1;
+  kind_node->is_hidden_const_ = 1;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, $5, NULL);
+}
+| READ_JSON '(' file_table_arg_list ')' AS relation_name
+{
+  ParseNode *kind_node = NULL;
+  malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
+  kind_node->value_ = 1;
+  kind_node->is_hidden_const_ = 1;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, $6, NULL);
+}
+| READ_JSON '(' file_table_arg_list ')'
+{
+  ParseNode *kind_node = NULL;
+  malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
+  kind_node->value_ = 1;
+  kind_node->is_hidden_const_ = 1;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, NULL, NULL);
+}
+|
+READ_NDJSON '(' file_table_arg_list ')' relation_name
+{
+  ParseNode *kind_node = NULL;
+  malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
+  kind_node->value_ = 2;
+  kind_node->is_hidden_const_ = 1;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, $5, NULL);
+}
+| READ_NDJSON '(' file_table_arg_list ')' AS relation_name
+{
+  ParseNode *kind_node = NULL;
+  malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
+  kind_node->value_ = 2;
+  kind_node->is_hidden_const_ = 1;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, $6, NULL);
+}
+| READ_NDJSON '(' file_table_arg_list ')'
+{
+  ParseNode *kind_node = NULL;
+  malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
+  kind_node->value_ = 2;
+  kind_node->is_hidden_const_ = 1;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, NULL, NULL);
+}
+|
+READ_PARQUET '(' file_table_arg_list ')' relation_name
+{
+  ParseNode *kind_node = NULL;
+  malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
+  kind_node->value_ = 3;
+  kind_node->is_hidden_const_ = 1;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, $5, NULL);
+}
+| READ_PARQUET '(' file_table_arg_list ')' AS relation_name
+{
+  ParseNode *kind_node = NULL;
+  malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
+  kind_node->value_ = 3;
+  kind_node->is_hidden_const_ = 1;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, $6, NULL);
+}
+| READ_PARQUET '(' file_table_arg_list ')'
+{
+  ParseNode *kind_node = NULL;
+  malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
+  kind_node->value_ = 3;
+  kind_node->is_hidden_const_ = 1;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, NULL, NULL);
+}
+|
+GLOB '(' file_table_arg_list ')' relation_name
+{
+  ParseNode *kind_node = NULL;
+  malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
+  kind_node->value_ = 4;
+  kind_node->is_hidden_const_ = 1;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, $5, NULL);
+}
+| GLOB '(' file_table_arg_list ')' AS relation_name
+{
+  ParseNode *kind_node = NULL;
+  malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
+  kind_node->value_ = 4;
+  kind_node->is_hidden_const_ = 1;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, $6, NULL);
+}
+| GLOB '(' file_table_arg_list ')'
+{
+  ParseNode *kind_node = NULL;
+  malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
+  kind_node->value_ = 4;
+  kind_node->is_hidden_const_ = 1;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, NULL, NULL);
+}
+;
+
+file_table_arg_list:
+file_table_arg
+{
+  malloc_list_node($, result->malloc_pool_, T_EXPR_LIST, 2, 1, $1);
+}
+| file_table_arg_list ',' file_table_arg
+{
+  push_back_list(result->malloc_pool_, result, $$, $1, $3);
+}
+;
+
+file_table_arg:
+simple_expr
+| NAME_OB '=' simple_expr
+;
 hybrid_search_expr:
 HYBRID_SEARCH '(' literal ',' hybrid_search_param ')'
 {
@@ -18112,6 +18259,11 @@ ACCOUNT
 |       UNCONDITIONAL
 |       UNDEFINED
 |       UNNEST
+|       READ_CSV
+|       READ_JSON
+|       READ_NDJSON
+|       READ_PARQUET
+|       GLOB
 |       UNICODE
 |       UNKNOWN
 |       UNLOCKED
