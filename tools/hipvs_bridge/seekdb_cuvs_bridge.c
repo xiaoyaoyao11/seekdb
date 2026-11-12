@@ -93,8 +93,8 @@ static void sk_load_build_params(cuvsCagraIndexParams_t ip, long dim)
   const int low_dim = dim <= 128;
   ip->build_algo = NN_DESCENT;
   ip->graph_degree = low_dim ? 96 : 128;
-  ip->intermediate_graph_degree = low_dim ? 128 : 160;
-  ip->nn_descent_niter = low_dim ? 20 : 50;
+  ip->intermediate_graph_degree = low_dim ? 128 : 128;
+  ip->nn_descent_niter = low_dim ? 20 : 20;
 }
 
 static void sk_free_staging(sk_cuvs_index* h)
