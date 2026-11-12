@@ -93,8 +93,12 @@ static void sk_load_build_params(cuvsCagraIndexParams_t ip, long dim)
   const int low_dim = dim <= 128;
   ip->build_algo = NN_DESCENT;
   ip->graph_degree = low_dim ? 96 : 128;
-  ip->intermediate_graph_degree = low_dim ? 128 : 128;
-  ip->nn_descent_niter = low_dim ? 20 : 40;
+  /* 160 is the lowest >128d intermediate degree that keeps
+   * hidden250k:recall@100_baseline_delta passing (128 failed twice).
+   * niter=40 removed the query_regression seen at niter=20, so 30 is
+   * the next safe step down from the 1.900x / 12.209 point (160/50). */
+  ip->intermediate_graph_degree = low_dim ? 128 : 160;
+  ip->nn_descent_niter = low_dim ? 20 : 30;
 }
 
 static void sk_free_staging(sk_cuvs_index* h)

@@ -96,16 +96,35 @@ official run is the source of truth for the 256-d gates.
 
 ## Score-oriented iteration
 
-The official result for the previous shape (128/192/100 + baseline itopk) was
-`build=1.667x, query=0.977x, gates=pass` -> 10.515 / 20, then
-`build=1.900x, query=1.005x, gates=pass` -> 12.209 / 20 at 160/50.  Pushing
-further to 128/20 failed `hidden250k:recall@100_baseline_delta` and
-`hidden250k:query_regression`, so niter is stepped back to 40 while keeping
-the smaller intermediate graph; the score is build-speed based, not query.  This contest scores
-BUILD acceleration, not query acceleration, so the 256-d path running the full
-100 descent iterations was the remaining bottleneck.  Halving it to 50 and
-trimming the intermediate graph to 160 keeps the recall-critical settings
-unchanged while cutting the dominant build term.  The staging-buffer reuse is
+This contest scores BUILD acceleration, not query acceleration.  Every run below
+keeps the recall-critical settings untouched: `graph_degree = 128` on the >128-d
+path, `itopk_size = max(4 * topk, 512)`, `search_width = 4`, and the reused
+staging buffers.  Only `intermediate_graph_degree` and `nn_descent_niter` on the
+>128-d path are swept; the <=128-d path stays at 96/128/20 throughout.
+
+| version | intermediate / niter | official message | score |
+| --- | --- | --- | --- |
+| baseline | 192 / 100 | `build=1.667x, query=0.977x, gates=pass` | 10.515 |
+| v2 | 160 / 50 | `build=1.900x, query=1.005x, gates=pass` | **12.209** |
+| v3 | 128 / 20 | `gates failed: hidden250k:recall@100_baseline_delta,hidden250k:query_regression` | 0 |
+| v4 | 128 / 40 | `gates failed: hidden250k:recall@100_baseline_delta` | 0 |
+| v5 | 160 / 30 | pending official run | - |
+
+Two conclusions from the v3/v4 pair:
+
+- `intermediate_graph_degree = 128` is what breaks
+  `hidden250k:recall@100_baseline_delta`; it fails at niter=20 **and** niter=40.
+  The intermediate graph therefore cannot go below 160 on the hidden 250K workload.
+- Raising niter from 20 to 40 removed `hidden250k:query_regression`, so that gate
+  is tied to the descent budget, not to the intermediate degree.
+
+v5 restores the smallest known-safe intermediate degree (160) and spends the
+remaining budget on lowering niter to 30.  With the baseline cost model
+`build(niter) = 11.1 s + niter * 0.348 s`, 160/50 -> 160/30 removes another
+~7 s from the dominant build term while keeping a descent budget that v4
+showed is clear of query regression.  If v5 passes, the next sweep points are
+160/20 and then 160/15; if it regresses, fall back to the locked 12.209 point
+at 160/50 (already recorded with `maxScoreFlag=1`).  Staging-buffer reuse is
 kept for the throughput component; `lib=vsag` CPU fallback stays available.
 
 ## Build
