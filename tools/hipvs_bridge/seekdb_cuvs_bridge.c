@@ -19,9 +19,9 @@
  *     once per index handle and reused.  The baseline allocates/frees three
  *     device buffers and creates/destroys the search params on every
  *     single-row query; hipMalloc/hipFree are synchronous and expensive.
- *   - itopk_size is max(2*topk, 256) instead of max(4*topk, 512).  Search cost
- *     scales with this internal queue, and a 256-entry queue still leaves a
- *     wide margin over k for the fixed Top-10/Top-100 workload.
+ *   - itopk_size stays at the baseline max(4*topk, 512).  Halving it to
+ *     max(2*topk, 256) broke the official Hidden250K recall gates; the
+ *     staging-buffer reuse alone is enough for the throughput component.
  *   - cudaDeviceSynchronize() is issued before the D2H copy.  cuVS executes
  *     the search on its internal stream; reading the result tensor without a
  *     wait can race the kernel.
@@ -162,8 +162,13 @@ static int sk_tune_search_params(sk_cuvs_index* h, long topk)
   }
   if (h->sp_topk == topk) return 0;
 
-  size_t itopk = (size_t)topk * 2;
-  if (itopk < 256) itopk = 256;
+  /* Baseline itopk budget.  The earlier max(2*topk,256) tuning passes the
+   * public 128-d smoke test but costs Hidden250K recall@10 / recall@100:
+   * for k=100 the internal queue drops from 512 to 256 entries.  Keep the
+   * reused staging buffers (the throughput win) and restore the baseline
+   * search budget so the official recall gates are met. */
+  size_t itopk = (size_t)topk * 4;
+  if (itopk < 512) itopk = 512;
   if (itopk < (size_t)topk) itopk = (size_t)topk;
   h->sp->itopk_size = itopk;
   h->sp->search_width = 4;

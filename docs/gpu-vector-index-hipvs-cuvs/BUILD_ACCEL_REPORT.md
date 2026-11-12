@@ -65,7 +65,10 @@ Query path:
 
 - Reuse the three device staging buffers and `cuvsCagraSearchParams` per index
   handle instead of allocating/freeing them on every single-row query.
-- `itopk_size = max(2 * topk, 256)` and `search_width = 4`.
+- `itopk_size = max(4 * topk, 512)` (baseline budget) and `search_width = 4`.
+  The earlier `max(2 * topk, 256)` tuning passed the public smoke test but
+  failed the official Hidden250K recall@10 / recall@100 gates; the staging
+  reuse is kept because it does not affect recall.
 - Synchronize the cuVS stream before copying results back to the host.
 
 ## Reference measurements
