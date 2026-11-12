@@ -207,6 +207,14 @@ public:
                                   TableItem *&table_item);
   int resolve_json_table_item(const ParseNode &table_node,
                               TableItem *&table_item);
+  int resolve_file_table_item(const ParseNode &table_node,
+                              TableItem *&table_item);
+  int resolve_file_table_column_all_items(const TableItem &table_item,
+                                          ObIArray<ColumnItem> &col_items);
+  int add_file_table_column_items(const TableItem &table_item);
+  int build_file_table_data_type(int32_t col_type, common::ObDataType &data_type);
+  static int get_file_table_const_int(const ParseNode &node, int64_t &value);
+  static int get_file_table_const_bool(const ParseNode &node, bool &value);
   int resolve_unnest_item(const ParseNode &table_node, TableItem *&table_item);
   int create_unnest_table_item(TableItem *&table_item, ObString table_name);
   int unnest_table_add_column(TableItem *&table_item, ColumnItem *&col_item, ObString col_name);

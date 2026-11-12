@@ -965,6 +965,7 @@ Status CsvScanner::infer_schema(std::vector<ColumnSchema> *columns, Error *error
     for (size_t i = 0; i < column_count; ++i) {
       inferrers[i].observe(fields[i], 0 != nulls[i]);
     }
+    ++row_count_;
     have_record = read_record(&fields, &nulls, &record_line, error);
   }
   if (nullptr != error && !error->ok()) {
@@ -1432,6 +1433,7 @@ Status JsonlScanner::infer_schema(std::vector<ColumnSchema> *columns, Error *err
       return Status::PARSE_ERROR;
     }
     have_record = true;
+    ++row_count_;
     for (size_t i = 0; i < keys.size(); ++i) {
       size_t index = field_order.size();
       for (size_t k = 0; k < field_order.size(); ++k) {

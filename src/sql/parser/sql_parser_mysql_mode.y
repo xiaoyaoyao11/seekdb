@@ -499,6 +499,7 @@ END_P SET_VAR DELIMITER
 %type <node> skip_index_type opt_skip_index_type_list
 %type <node> vec_index_params vec_index_param vec_index_param_value opt_with_vector_index_parameters
 %type <node> json_table_expr unnest_expr mock_jt_on_error_on_empty jt_column_list json_table_column_def file_table_expr
+%type <node> file_table_arg_list file_table_arg file_table_named_arg
 %type <node> json_table_ordinality_column_def json_table_exists_column_def json_table_value_column_def json_table_nested_column_def
 %type <node> opt_value_on_empty_or_error_or_mismatch opt_on_mismatch
 %type <node> table_values_clause table_values_clause_with_order_by_and_limit values_row_list row_value
@@ -17586,17 +17587,30 @@ GLOB '(' file_table_arg_list ')' relation_name
 file_table_arg_list:
 file_table_arg
 {
-  malloc_list_node($, result->malloc_pool_, T_EXPR_LIST, 2, 1, $1);
+  malloc_list_node($$, result->malloc_pool_, T_EXPR_LIST, 2, 1, $1);
 }
-| file_table_arg_list ',' file_table_arg
+| file_table_arg_list ',' file_table_named_arg
 {
   push_back_list(result->malloc_pool_, result, $$, $1, $3);
 }
 ;
 
+/**
+ * The only positional argument of a file table function is the path of the
+ * file.  Every other argument has to be a named argument, so that a mistyped
+ * positional argument is reported as a syntax error instead of being silently
+ * ignored.
+ */
 file_table_arg:
 simple_expr
-| NAME_OB '=' simple_expr
+;
+
+file_table_named_arg:
+NAME_OB '=' simple_expr
+{
+  ParseNode *name_node = $1;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_NAMED_ARG, 3, name_node, $3, NULL);
+}
 ;
 hybrid_search_expr:
 HYBRID_SEARCH '(' literal ',' hybrid_search_param ')'

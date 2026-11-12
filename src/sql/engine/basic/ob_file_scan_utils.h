@@ -220,6 +220,8 @@ public:
   const std::vector<std::string> &header_names() const { return header_names_; }
   const ReadOptions &options() const { return options_; }
   const std::string &path() const { return path_; }
+  /// The number of records that were seen by the last schema inference.
+  int64_t row_count() const { return row_count_; }
 
 private:
   bool read_record(std::vector<std::string> *fields,
@@ -240,6 +242,7 @@ private:
   bool opened_                  = false;
   int64_t current_line_         = 1;
   int64_t record_start_line_    = 1;
+  int64_t row_count_            = 0;
   std::string buffer_;
   size_t buffer_pos_            = 0;
   std::FILE *file_              = nullptr;
@@ -278,6 +281,8 @@ public:
   const std::vector<std::string> &header_names() const { return header_names_; }
   const ReadOptions &options() const { return options_; }
   const std::string &path() const { return path_; }
+  /// The number of records that were seen by the last schema inference.
+  int64_t row_count() const { return row_count_; }
 
 private:
   bool read_line(std::string *line, int64_t *line_no, Error *error);
@@ -294,6 +299,7 @@ private:
   bool eof_        = false;
   bool opened_     = false;
   int64_t line_no_ = 0;
+  int64_t row_count_ = 0;
   std::FILE *file_ = nullptr;
 };
 
