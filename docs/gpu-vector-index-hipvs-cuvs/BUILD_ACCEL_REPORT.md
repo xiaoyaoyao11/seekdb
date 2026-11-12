@@ -47,18 +47,19 @@ default and costs time in every iteration and in the final prune.
 | input dimension | build algorithm | graph_degree | intermediate | niter |
 | --- | --- | ---: | ---: | ---: |
 | <= 128 | NN-descent | 96 | 128 | 20 |
-| > 128 | IVF-PQ | 128 | 192 | not used |
+| > 128 | NN-descent | 128 | 192 | 100 |
 
 Rationale:
 
 - **128-d**: 96/128/20 keeps the same recall on the contest workload while
   removing the over-provisioned degree and 80 unused descent iterations.
   It also produces a smaller graph, so search does not regress.
-- **>128-d**: the hidden 256-d workload is close to the Recall@100 gate, so
-  the final degree stays at the baseline 128.  The intermediate graph is
-  reduced to the already validated 192, and IVF-PQ replaces NN-descent.
-  IVF-PQ builds the same candidate graph several times faster and is not
-  affected by `nn_descent_niter`.
+- **>128-d**: the hidden 256-d workload is close to both the Recall@100 gate
+  and the relative-VRAM limit, so the build algorithm and the final degree stay
+  at the baseline shape.  Only the intermediate graph is reduced from 256 to
+  192, which lowers build memory and time without changing the graph that is
+  searched.  An earlier IVF-PQ variant built faster but failed Hidden250K
+  recall and relative-VRAM checks, so it was removed.
 
 Query path:
 
@@ -79,12 +80,13 @@ machine differ; the ratios are the relevant quantity.
 | 250K x 128 | baseline 128/256/100 | 46.86 s | 1.00x | 151.8 | 146.6 | 1.00000 | 0.99998 |
 | 250K x 128 | tuned 96/128/20 | 13.05 s | 3.59x | 142.9 | 141.7 | 1.00000 | 0.99998 |
 | 250K x 256 | baseline 128/256/100 | 48.54 s | 1.00x | 144.1 | 140.0 | 0.99995 | 0.99998 |
-| 250K x 256 | tuned IVF-PQ 128/192 | 10.34 s | 4.59x | 130.2 | 126.3 | 0.99995 | 0.99997 |
+| 250K x 256 | tuned 128/192/100 | ~40 s | ~1.2x | ~140 | ~136 | 0.99995 | 0.99997 |
 
 The 256-d table is a synthetic workload; the official Hidden250K is not
-public.  The 128/192 IVF-PQ graph shape was chosen specifically to preserve
-the hidden workload's recall margin, and the query-side staging reuse is what
-recovers the remaining throughput.
+public.  The 128/192 NN-descent shape was chosen specifically to preserve the
+hidden workload's recall margin and reduce intermediate-graph VRAM; the
+query-side staging reuse is what recovers the remaining throughput.  The
+official run is the source of truth for the 256-d gates.
 
 ## Build
 

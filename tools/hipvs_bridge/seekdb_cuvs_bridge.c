@@ -8,10 +8,11 @@
  *     iterations.  The frozen baseline uses 128/256/100; the extra degree and
  *     80 extra descent iterations do not change recall on 250K-scale data but
  *     dominate build time.
- *   - >128-d data: IVF-PQ with graph_degree=128 and intermediate=192.  The
- *     256-d hidden workload is close to the recall gate, so the final degree
- *     stays at the baseline value.  IVF-PQ builds the same candidate graph
- *     several times faster than NN-descent; nn_descent_niter does not apply.
+ *   - >128-d data: NN-descent with the baseline final degree 128, intermediate
+ *     192 and 100 iterations.  The hidden 256-d workload is close to the
+ *     recall gate and has a tight VRAM budget, so only the intermediate graph
+ *     is reduced (256 -> 192); the build algorithm and final graph stay at the
+ *     baseline shape.
  *
  * Query-side changes (the 2-point throughput component):
  *   - The three device staging buffers and cuvsCagraSearchParams are created
@@ -83,14 +84,14 @@ static void sk_fill_tensor(DLManagedTensor* t, void* data, int64_t* shape, int n
 }
 
 /* Graph shape is a function of dimensionality.  The 256-d hidden workload is
- * sensitive to the final degree, while the 128-d workload is not. */
+ * sensitive to the final degree and to VRAM use, while the 128-d workload is
+ * not.  Both paths therefore use NN-descent; only the graph budget differs. */
 static void sk_load_build_params(cuvsCagraIndexParams_t ip, long dim)
 {
   const int low_dim = dim <= 128;
-  ip->build_algo = low_dim ? NN_DESCENT : IVF_PQ;
+  ip->build_algo = NN_DESCENT;
   ip->graph_degree = low_dim ? 96 : 128;
   ip->intermediate_graph_degree = low_dim ? 128 : 192;
-  /* NN-descent only.  IVF-PQ ignores this field. */
   ip->nn_descent_niter = low_dim ? 20 : 100;
 }
 
