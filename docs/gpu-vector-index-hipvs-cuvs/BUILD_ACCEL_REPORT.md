@@ -47,7 +47,7 @@ default and costs time in every iteration and in the final prune.
 | input dimension | build algorithm | graph_degree | intermediate | niter |
 | --- | --- | ---: | ---: | ---: |
 | <= 128 | NN-descent | 96 | 128 | 20 |
-| > 128 | NN-descent | 128 | 128 | 20 |
+| > 128 | NN-descent | 128 | 128 | 40 |
 
 Rationale:
 
@@ -98,7 +98,10 @@ official run is the source of truth for the 256-d gates.
 
 The official result for the previous shape (128/192/100 + baseline itopk) was
 `build=1.667x, query=0.977x, gates=pass` -> 10.515 / 20, then
-`build=1.900x, query=1.005x, gates=pass` -> 12.209 / 20 at 160/50.  This contest scores
+`build=1.900x, query=1.005x, gates=pass` -> 12.209 / 20 at 160/50.  Pushing
+further to 128/20 failed `hidden250k:recall@100_baseline_delta` and
+`hidden250k:query_regression`, so niter is stepped back to 40 while keeping
+the smaller intermediate graph; the score is build-speed based, not query.  This contest scores
 BUILD acceleration, not query acceleration, so the 256-d path running the full
 100 descent iterations was the remaining bottleneck.  Halving it to 50 and
 trimming the intermediate graph to 160 keeps the recall-critical settings
