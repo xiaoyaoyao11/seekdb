@@ -533,6 +533,7 @@ public:
   int get_nlj_batching_enabled(bool &v) const;
   int get_enable_parallel_dml(bool &v) const;
   int get_enable_parallel_query(bool &v) const;
+  int get_enable_file_sql(bool &v) const;
   int get_enable_parallel_ddl(bool &v) const;
   int get_force_parallel_query_dop(uint64_t &v) const;
   int get_parallel_degree_policy_enable_auto_dop(bool &v) const;

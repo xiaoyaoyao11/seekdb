@@ -1055,6 +1055,9 @@ bool ObSQLUtils::is_readonly_stmt(ParseResult &result)
                && root->children_[1]->type_ == T_SELECT
                && NULL == root->children_[1]->children_[PARSE_SELECT_FOR_UPD]) {
       ret = true;
+    } else if (T_DESCRIBE_SELECT_STMT == type) {
+      // the DESCRIBE statement only reports the columns of a select statement
+      ret = true;
     } else if (IS_SHOW_STMT(type)
                || T_USE_DATABASE == type
                || T_TRANSACTION == type

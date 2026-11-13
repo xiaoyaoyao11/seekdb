@@ -17,3 +17,18 @@
 #pragma once
 
 #include "query/parser/parse_node.h"
+
+/**
+ * The file readers that can be used as a table source.
+ *
+ * The value is stored in the parse node of a file table expression and is
+ * interpreted by the resolver.
+ */
+enum ObFileTableFuncType
+{
+  FILE_TABLE_FUNC_CSV     = 0,
+  FILE_TABLE_FUNC_JSON    = 1,
+  FILE_TABLE_FUNC_NDJSON  = 2,
+  FILE_TABLE_FUNC_PARQUET = 3,
+  FILE_TABLE_FUNC_GLOB    = 4,
+};

@@ -1659,6 +1659,9 @@ int ObSelectResolver::expand_target_list(
       ret = OB_ERR_UNEXPECTED;
     } else if (OB_FAIL(append(column_items, get_stmt()->get_column_items()))) {
     }
+  } else if (table_item.is_file_table()) {
+    if (OB_FAIL(resolve_file_table_column_all_items(table_item, *column_items))) {
+    }
   } else {
     ret = OB_ERR_UNEXPECTED;
   }

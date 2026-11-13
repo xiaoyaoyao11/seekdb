@@ -1,0 +1,33 @@
+# INNER JOIN of two csv files
+id	name	dept
+1	Alice	eng
+2	Bob	sales
+3	Chen	ops
+# LEFT JOIN keeps the rows without a match
+id	name	dept
+1	Alice	eng
+2	Bob	sales
+3	Chen	ops
+# INNER JOIN across two different file formats
+id	name	dept	city
+1	Alice	eng	beijing
+2	Bob	sales	shanghai
+# LEFT JOIN across two different file formats
+id	name	dept	city
+1	Alice	eng	beijing
+2	Bob	sales	shanghai
+3	Chen	NULL	NULL
+# the join keys are compared as numbers, not as text
+matched
+3
+# an aggregate on top of a join
+region	headcount	total_score
+north	2	188.75
+south	1	87
+# a missing file is reported and does not crash the server
+# a file that is not a table is reported
+# a file outside of secure_file_priv is refused
+# a path that tries to escape secure_file_priv is refused
+# an unknown named argument is refused
+# a format that does not match the function is refused
+# the file table functions are refused once the switch is off again

@@ -129,9 +129,10 @@ struct ObSelectIntoItem
         escaped_cht_(),
         buffer_size_(DEFAULT_BUFFER_SIZE),
         external_properties_(),
-        has_header_(false),
-        null_str_(),
-        is_copy_to_file_(false)
+        is_copy_(false),
+        has_header_(true),
+        null_string_(),
+        column_names_()
   {
     field_str_.set_varchar(DEFAULT_FIELD_TERM_STR);
     field_str_.set_collation_type(ObCharset::get_system_collation());
@@ -158,9 +159,10 @@ struct ObSelectIntoItem
     cs_type_ = other.cs_type_;
     buffer_size_ = other.buffer_size_;
     external_properties_ = other.external_properties_;
+    is_copy_ = other.is_copy_;
     has_header_ = other.has_header_;
-    null_str_ = other.null_str_;
-    is_copy_to_file_ = other.is_copy_to_file_;
+    null_string_ = other.null_string_;
+    column_names_ = other.column_names_;
     return user_vars_.assign(other.user_vars_);
   }
   int deep_copy(ObIAllocator &allocator,
@@ -192,9 +194,20 @@ struct ObSelectIntoItem
   common::ObCollationType cs_type_;
   int64_t buffer_size_;
   common::ObString external_properties_;
-  bool has_header_; // copy ... (format csv, header)
-  common::ObString null_str_; // copy ... (nullstr 'NULL')
-  bool is_copy_to_file_; // distinguish duckdb style copy from select into outfile
+  /**
+   * The fields below carry the shape of the file that the COPY statement of
+   * the "file as database" feature produces.  They are only meaningful when
+   * is_copy_ is true, an ordinary SELECT ... INTO OUTFILE keeps the
+   * behaviour that it always had.
+   */
+  /// True when the file is produced by a COPY statement.
+  bool is_copy_;
+  /// True when the first line of the file holds the names of the columns.
+  bool has_header_;
+  /// The text that represents a NULL value, an empty text writes an empty field.
+  common::ObString null_string_;
+  /// The names of the columns of the exported result, they are the header of the file.
+  common::ObSEArray<common::ObString, 16> column_names_;
 
   static const char* const DEFAULT_FIELD_TERM_STR;
   static const char* const DEFAULT_LINE_TERM_STR;

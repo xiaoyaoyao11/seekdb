@@ -10988,5 +10988,18 @@
     "info_cn": "",
     "background_cn": "",
     "ref_url": ""
+  },
+  "enable_file_sql": {
+    "id": 10754,
+    "name": "enable_file_sql",
+    "default_value": "0",
+    "base_value": "0",
+    "data_type": "bool",
+    "info": "enable the table functions that read a local file as a table, such as read_csv, read_json and read_parquet",
+    "flags": "SESSION | NEED_SERIALIZE",
+    "publish_version": "1.0.0.0",
+    "info_cn": "开启把本地文件当作表来读取的表函数，例如 read_csv、read_json 与 read_parquet",
+    "background_cn": "",
+    "ref_url": ""
   }
 }

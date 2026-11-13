@@ -1,0 +1,105 @@
+# owner: database-competition
+# owner group: SQL
+# description: Join two local files, and exercise the security and the
+#              error paths of the file table functions.
+# tags: sql,executor,file_sql
+
+--source mysql_test/test_suite/file_sql/include/copy_file_sql_data.inc
+--source mysql_test/test_suite/file_sql/include/copy_file_sql_join_data.inc
+
+--disable_query_log
+let $FILE_SQL_DATA_DIR = $OBSERVER_DIR/data_for_mysqltest_file_sql;
+let $FILE_SQL_JOIN_DATA_DIR = $OBSERVER_DIR/data_for_mysqltest_file_sql_join;
+
+set session enable_file_sql = ON;
+
+--echo # INNER JOIN of two csv files
+eval select e.id, e.name, d.dept
+       from read_csv('$FILE_SQL_DATA_DIR/basic.csv') e
+       join read_csv('$FILE_SQL_JOIN_DATA_DIR/dept.csv') d
+         on e.id = d.id
+      order by e.id;
+
+--echo # LEFT JOIN keeps the rows without a match
+eval select e.id, e.name, d.dept
+       from read_csv('$FILE_SQL_DATA_DIR/basic.csv') e
+       left join read_csv('$FILE_SQL_JOIN_DATA_DIR/dept.csv') d
+         on e.id = d.id
+      order by e.id;
+
+--echo # INNER JOIN across two different file formats
+eval select e.id, e.name, d.dept, d.city
+       from read_csv('$FILE_SQL_DATA_DIR/basic.csv') e
+       join read_json('$FILE_SQL_JOIN_DATA_DIR/dept.jsonl') d
+         on e.id = d.id
+      order by e.id;
+
+--echo # LEFT JOIN across two different file formats
+eval select e.id, e.name, d.dept, d.city
+       from read_csv('$FILE_SQL_DATA_DIR/basic.csv') e
+       left join read_json('$FILE_SQL_JOIN_DATA_DIR/dept.jsonl') d
+         on e.id = d.id
+      order by e.id;
+
+--echo # the join keys are compared as numbers, not as text
+eval select count(*) AS matched
+       from read_csv('$FILE_SQL_DATA_DIR/basic.csv') e
+       join read_csv('$FILE_SQL_JOIN_DATA_DIR/dept.csv') d
+         on e.id = d.id;
+
+--echo # an aggregate on top of a join
+eval select d.region, count(*) AS headcount, sum(e.score) AS total_score
+       from read_csv('$FILE_SQL_DATA_DIR/basic.csv') e
+       join read_csv('$FILE_SQL_JOIN_DATA_DIR/dept.csv') d
+         on e.id = d.id
+      group by d.region
+      order by d.region;
+
+--echo # a missing file is reported and does not crash the server
+--disable_result_log
+--error 1105
+eval select * from read_csv('$FILE_SQL_DATA_DIR/does_not_exist.csv');
+--enable_result_log
+
+--echo # a file that is not a table is reported
+--disable_result_log
+--error 1105
+eval select * from read_csv('$FILE_SQL_DATA_DIR/invalid.txt');
+--enable_result_log
+
+--echo # a file outside of secure_file_priv is refused
+--disable_result_log
+--error 1235
+eval select * from read_csv('/etc/passwd');
+--enable_result_log
+
+--echo # a path that tries to escape secure_file_priv is refused
+--disable_result_log
+--error 1235
+eval select * from read_csv('$FILE_SQL_DATA_DIR/../../etc/passwd');
+--enable_result_log
+
+--echo # an unknown named argument is refused
+--disable_result_log
+--error 1235
+eval select * from read_csv('$FILE_SQL_DATA_DIR/basic.csv', unknown_option = 1);
+--enable_result_log
+
+--echo # a format that does not match the function is refused
+--disable_result_log
+--error 1235
+eval select * from read_csv('$FILE_SQL_DATA_DIR/basic.csv', format = 'parquet');
+--enable_result_log
+
+set session enable_file_sql = OFF;
+
+--echo # the file table functions are refused once the switch is off again
+--disable_result_log
+--error 1235
+eval select * from read_csv('$FILE_SQL_DATA_DIR/basic.csv');
+--enable_result_log
+
+--enable_query_log
+
+--source mysql_test/test_suite/file_sql/include/remove_file_sql_join_data.inc
+--source mysql_test/test_suite/file_sql/include/remove_file_sql_data.inc

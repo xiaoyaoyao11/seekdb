@@ -4038,6 +4038,11 @@ int ObBasicSessionInfo::get_enable_parallel_query(bool &v) const
   return get_bool_sys_var(SYS_VAR__ENABLE_PARALLEL_QUERY, v);
 }
 
+int ObBasicSessionInfo::get_enable_file_sql(bool &v) const
+{
+  return get_bool_sys_var(SYS_VAR_ENABLE_FILE_SQL, v);
+}
+
 int ObBasicSessionInfo::get_enable_parallel_ddl(bool &v) const
 {
   return get_bool_sys_var(SYS_VAR__ENABLE_PARALLEL_DDL, v);
