@@ -1,197 +1,138 @@
-# CAGRA build acceleration report
+# hipVS build optimization: verified results and local candidate
 
-## Scope
+## Official results
 
-This change only touches the contest GPU bridge
-(`tools/hipvs_bridge/seekdb_cuvs_bridge.c`) and its build script.  The public
-C ABI, SQL surface, FP32 data contract, CAGRA search implementation and snapshot
-format are unchanged.  `lib=vsag` remains the CPU path.
+The following are contest results, not local GPU measurements. On 2026-11-13
+the AMD quota was 8 used out of 10 when this local candidate was prepared.
 
-## What is timed
+| Configuration, >128 dimensions | Official result | Score |
+| --- | --- | ---: |
+| NN-descent, final/intermediate/iterations 128/192/100 | build=1.667x, query=0.977x, gates=pass (earlier recorded result) | 10.515 |
+| NN-descent, 128/160/50, search queue max(4k,512) | build=1.900x, query=1.005x, gates=pass (earlier recorded result) | 12.209 |
+| NN-descent, 128/160/30, search queue max(4k,512) | hidden250k:recall@100_baseline_delta | 0 |
+| NN-descent, 128/160/30, search queue max(8k,1024) | gpu_path | 0 |
+| NN-descent, 128/160/30, search queue max(6k,768), corrected source | gpu_path | 0 |
+| v9: NN-descent, 128/160/40, search queue max(4k,512) | build=1.876x, query=1.024x, gates=pass | 12.133 |
 
-The official timer starts at
+The latest result is task 47252335, commit
+`caa3f9e0b2020bad286c063e4be5279f0e4a980d`, branch `amd-cagra-submit`.
+The highest recorded score remains 12.209, not 12.133 or 20.
 
-```sql
-CREATE VECTOR INDEX idx_items ON items(v)
-  WITH (distance=l2, type=hnsw, lib=cuvs,
-        m=16, ef_construction=200, ef_search=64);
-```
+An earlier v8 draft contained an unclosed C comment. Its first submission and
+an unnecessary retry failed before completing the test cases. These attempts
+must not be treated as evidence about GPU speed or recall.
 
-on a table whose rows are already loaded, and stops after the first fixed
-`APPROXIMATE ... LIMIT k` query returns.  Source build and data load are
-outside the timer.
+## What these results do and do not show
 
-## Baseline cost model
+- Reducing the high-dimensional descent budget from 50 to 40 did not produce
+  a measured build-speed improvement. Previously quoted linear cost models
+  and predicted scores are not supported by this comparison and must not be
+  used to justify another submission.
+- The sampled configurations with intermediate degree 128 failed recall
+  gates. This does not prove that every value below 160 must fail.
+- `gpu_path` is an aggregate failure message. The two wider-queue failures
+  do not establish a universal queue-size limit or identify the failing
+  kernel. The passing queue is retained as a conservative checkpoint, not
+  described as a hardware limit.
+- There is no local Radeon/ROCm performance measurement available for the
+  candidate below. Passing MOCK tests is not GPU verification.
 
-The frozen V5 bridge calls `cuvsCagraBuild` with
+## v10 candidate prepared for one authorized official test
 
-```text
-build_algo                = NN_DESCENT
-graph_degree              = 128
-intermediate_graph_degree = 256
-nn_descent_niter          = 100
-```
+All graph-building settings, FP32 tensors, public C ABI, and snapshot data
+inclusion stay at the passing v9 checkpoint:
 
-On a 250K x 128 workload the measured build time is approximately
-
-```text
-build(niter) = 11.1 s + niter * 0.348 s
-```
-
-so the fixed scan/transfer/serialize/first-query cost is ~11 s and the 100
-descent iterations account for the rest.  The graph degree is also 2x the cuVS
-default and costs time in every iteration and in the final prune.
-
-## Tuned configuration
-
-| input dimension | build algorithm | graph_degree | intermediate | niter |
+| Dimensions | Build algorithm | Final degree | Intermediate degree | Iterations |
 | --- | --- | ---: | ---: | ---: |
-| <= 128 | NN-descent | 96 | 128 | 20 |
-| > 128 | NN-descent | 128 | 160 | 40 |
+| <=128 | NN-descent | 96 | 128 | 20 |
+| >128 | NN-descent | 128 | 160 | 40 |
 
-Rationale:
+Search retains `itopk_size=max(4*topk,512)` and `search_width=4`.
 
-- **128-d**: 96/128/20 keeps the same recall on the contest workload while
-  removing the over-provisioned degree and 80 unused descent iterations.
-  It also produces a smaller graph, so search does not regress.
-- **>128-d**: the searched graph is set by the final degree (kept at the
-  baseline 128).  The search queue is locked at the baseline
-  `max(4*topk, 512)`: halving it failed the recall gates and widening it to
-  768/1024 failed the `gpu_path` gate, so recall margin cannot be bought on
-  the query side.  The build-side descent budget is trimmed instead:
-  intermediate graph 256 -> 160 (128 fails recall@100) and iterations
-  100 -> 40 (30 fails recall@100).  On the measured cost model this removes
-  about 25 s from the 256-d build without changing the searched graph.  An
-  earlier IVF-PQ variant also failed Hidden250K recall/VRAM checks and
-  remains removed.
+The local code changes only runtime synchronization and error handling:
 
-Query path:
+1. Replace normal query-path device-wide synchronization with
+   `cuvsStreamSync(resources)`. A stream error retains failure status and
+   attempts a device-wide drain; it is not silently reported as success.
+2. Wait after a failed CAGRA search as well, because a failing call may have
+   already queued work before returning.
+3. Send every batch allocation failure through batch cleanup, so second- and
+   third-allocation failures release the buffers already allocated.
+4. Reject missing input, nonpositive build shapes, and top-k beyond the index
+   row count before allocating/searching. Check all dataset/query/result byte
+   count multiplications for `size_t` overflow before allocation or copying.
+5. If both resource and device synchronization fail, poison the handle and
+   reject subsequent searches and snapshots. Retain the single-row staging
+   buffers or the one failed batch instead of recycling memory referenced by
+   outstanding work. Cleanup retries the drain; if it still fails, the handle
+   is deliberately retained until a later successful cleanup or process exit.
+   This failure-only retention is a safety trade-off, not a normal-path leak.
 
-- Reuse the three device staging buffers and `cuvsCagraSearchParams` per index
-  handle instead of allocating/freeing them on every single-row query.
-- `itopk_size = max(4 * topk, 512)` (baseline budget) and `search_width = 4`.
-  `max(2 * topk, 256)` failed the official Hidden250K recall gates;
-  `max(8 * topk, 1024)` and `max(6 * topk, 768)` both aborted the first
-  GPU query (`gates failed: gpu_path`).  The staging reuse is what carries
-  the throughput component.
-- Synchronize the cuVS stream before copying results back to the host.
+These changes are a correctness/runtime-overhead candidate. No improvement
+in build speed, query throughput, VRAM, recall, or contest score is claimed.
 
-## Reference measurements
+The `cuvsStreamSync(cuvsResources_t)` declaration is documented by AMD here:
+<https://rocm.docs.amd.com/projects/hipVS/en/docs-25.10/reference/c_api/core_c_api.html>.
+The real project bridge header and `tools/hipvs_bridge/build.sh` were read
+from the submitted checkpoint using GitHub CLI. The C ABI matches; that script
+uses `hipcc`, `/opt/hipvs/include`, `/opt/rocm/include`, and `-lcuvs_c` (prefixes
+are overridable). Actual installed SDK headers/exports and GPU behavior remain
+unverified locally; the test SDK headers are deliberately MOCKs.
 
-The following are reference numbers from the public baseline tuning
-measurements on the same 250K synthetic protocol (4096 single-row queries, one
-observer, one table load per configuration).  Absolute times on the scoring
-machine differ; the ratios are the relevant quantity.
+## Local verification
 
-| workload | configuration | build | speedup | QPS Top-10 | QPS Top-100 | Recall@10 | Recall@100 |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 250K x 128 | baseline 128/256/100 | 46.86 s | 1.00x | 151.8 | 146.6 | 1.00000 | 0.99998 |
-| 250K x 128 | tuned 96/128/20 | 13.05 s | 3.59x | 142.9 | 141.7 | 1.00000 | 0.99998 |
-| 250K x 256 | baseline 128/256/100 | 48.54 s | 1.00x | 144.1 | 140.0 | 0.99995 | 0.99998 |
-| 250K x 256 | tuned 128/192/100 | ~40 s | ~1.2x | ~140 | ~136 | 0.99995 | 0.99997 |
+`hipvs-preflight.py` in the session's `hipvs-review/` directory compiles the
+entire bridge with generated MOCK headers in both the AMD and non-AMD include
+branches, using C11, `-Wall -Wextra -Werror -Wstrict-prototypes` and
+`-Werror=comment`.
 
-The 256-d table is a synthetic workload; the official Hidden250K is not
-public.  The 128/192 NN-descent shape was chosen specifically to preserve the
-hidden workload's recall margin and reduce intermediate-graph VRAM; the
-query-side staging reuse is what recovers the remaining throughput.  The
-official run is the source of truth for the 256-d gates.
+The MOCK harness covers single-row and batch queries, repeated staging
+reuse, optional distances, all three batch allocation failures, search
+failure after queuing, stream failure, double synchronization failure with
+poisoned-handle rejection, retained-buffer cleanup after recovery, multiplication
+overflow, invalid inputs, and simulated snapshot shape checks. Failed mock waits
+now leave work queued rather than silently clearing it. The public `LONG_MAX`
+overflow cases run only on LP64 hosts; the Windows test also checks the overflow
+helper directly with `SIZE_MAX`. These are host control-flow tests, not real
+snapshot-format, GPU correctness, recall, SDK compatibility, or speed tests.
 
-## Score-oriented iteration
+Latest local result for each include branch:
 
-This contest scores BUILD acceleration, not query acceleration.  Every run below
-keeps the recall-critical settings untouched: `graph_degree = 128` on the >128-d
-path, `itopk_size = max(4 * topk, 512)`, `search_width = 4`, and the reused
-staging buffers.  Only `intermediate_graph_degree` and `nn_descent_niter` on the
->128-d path are swept; the <=128-d path stays at 96/128/20 throughout.
-
-| version | intermediate / niter | official message | score |
-| --- | --- | --- | --- |
-| baseline | 192 / 100 | `build=1.667x, query=0.977x, gates=pass` | 10.515 |
-| v2 | 160 / 50 | `build=1.900x, query=1.005x, gates=pass` | **12.209** |
-| v3 | 128 / 20 | `gates failed: hidden250k:recall@100_baseline_delta,hidden250k:query_regression` | 0 |
-| v4 | 128 / 40 | `gates failed: hidden250k:recall@100_baseline_delta` | 0 |
-| v5 | 160 / 30 | `gates failed: hidden250k:recall@100_baseline_delta` | 0 |
-| v6 | 160 / 20 | **never submitted** — v5 proved it would fail the same gate | - |
-| v7 | 160 / 30 + `itopk=max(8k,1024)` | `gates failed: gpu_path` | 0 |
-| v8 | 160 / 30 + `itopk=max(6k,768)` | `gates failed: gpu_path` | 0 |
-| v9 | 160 / 40 + `itopk=512` | candidate, submitting | - |
-
-The v5 result changes the conclusion from the v3/v4 pair.  `recall@100` is not
-governed by `intermediate_graph_degree` alone: at 160 the gate still fails once
-the descent budget drops from 50 to 30.  So `160/50` (12.209) is the exact
-Pareto boundary of these two build parameters — sweeping them further can only
-lose points.  v6 (160/20) was therefore cancelled before submission, saving one
-of the ten daily attempts.
-
-v7 keeps the cheaper 30-iteration build and moves the compensation to search
-time: `itopk_size = max(8 * topk, 1024)` instead of `max(4 * topk, 512)`.
-The official run rejected it with `gates failed: gpu_path`: the first
-single-row search aborts before any recall gate is evaluated.  v8 repeated the
-experiment at `max(6 * topk, 768)` and failed the same gate, which pins the
-limit: on this hipVS/GPU pair the queue cannot go above the baseline 512, so
-the search-side compensation route is closed.
-
-v9 therefore returns to `itopk = 512` and stays on the build side:
-`160/40`.  Forty iterations sits between the failing 30 and the passing 50,
-and the cost model `build(niter) ≈ F + 0.348 s * niter` puts it at roughly
-21 s, i.e. about 2.2x on the 256-d build.  If v9 still reports
-`recall@100_baseline_delta`, the next and final build-side point is `160/45`
-(~2.05x); beyond that this parameter family is exhausted and `160/50`
-(12.209) remains the fallback.
-
-Two conclusions from the v3/v4 pair:
-
-- `intermediate_graph_degree = 128` is what breaks
-  `hidden250k:recall@100_baseline_delta`; it fails at niter=20 **and** niter=40.
-  The intermediate graph therefore cannot go below 160 on the hidden 250K workload.
-- Raising niter from 20 to 40 removed `hidden250k:query_regression`, so that gate
-  is tied to the descent budget, not to the intermediate degree.
-
-v5 restores the smallest known-safe intermediate degree (160) and spends the
-remaining budget on lowering niter to 30.  With the baseline cost model
-`build(niter) = 11.1 s + niter * 0.348 s`, 160/50 -> 160/30 removes another
-~7 s from the dominant build term while keeping a descent budget that v4
-showed is clear of query regression.  If v5 passes, the next sweep points are
-160/20 and then 160/15; if it regresses, fall back to the locked 12.209 point
-at 160/50 (already recorded with `maxScoreFlag=1`).  Staging-buffer reuse is
-kept for the throughput component; `lib=vsag` CPU fallback stays available.
-
-## Build
-
-The official build commands are unchanged:
-
-```bash
-HIPVS_ROOT=/opt/hipvs ROCM_ROOT=/opt/rocm \
-  tools/hipvs_bridge/build.sh <out>/libseekdb_cuvs_bridge.so
-
-cmake -S . -B build_release -G "Unix Makefiles" \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DOB_ENABLE_UNITY=ON \
-  -DOB_USE_LLD=ON \
-  -DOB_BUILD_CUVS=ON \
-  -DOB_BUILD_CUVS_TRACE=OFF \
-  -DCUVS_BRIDGE_LIB=<out>/libseekdb_cuvs_bridge.so
-cmake --build build_release --target seekdb
+```text
+strict_compile_exit=0
+MOCK TEST PASS: failures=0 live_buffers=0 resource_syncs=18 global_syncs=5
 ```
 
-## Correctness checks
+Strict C++17 syntax checks also pass in both MOCK include branches with
+`-Wall -Wextra -Werror -Werror=comment`. The MOCK CAGRA types use named
+struct tags; the earlier anonymous-type fixture error was corrected without
+weakening compiler diagnostics. Deliberately removing a C comment terminator
+is rejected in both branches. These extra checks do not compile the real SDK.
 
-The change must be validated with the baseline GPU smoke runner:
+All five device-wide sync attempts are deliberate failure injections, including
+the cleanup retry while both waits fail. The normal success path does not use
+device-wide synchronization.
 
-```bash
-LD_LIBRARY_PATH=<out>:/opt/hipvs/lib:/opt/rocm/lib \
-  docs/gpu-vector-index-hipvs-cuvs/validation/run_gpu_smoke.sh \
-    --observer build_release/src/observer/seekdb \
-    --bridge <out>/libseekdb_cuvs_bridge.so \
-    --base-dir /tmp/seekdb-cuvs-smoke \
-    --port 2981 --render /dev/dri/renderD135 \
-    --evidence /tmp/seekdb-cuvs-evidence
-```
+## Authorized official validation and remaining limitations
 
-Acceptance:
+The user subsequently authorized actual testing despite the unavailable local
+Radeon host. The next step is one official submission of this new v10 candidate,
+not a replay of v9. AMD automatic submission remains disabled. Quota, branch,
+commit, required fields and cooldown are checked immediately before sending;
+the second remaining daily opportunity is not spent until this result is known.
+The official test must validate real SDK compilation, GPU routing, snapshots,
+recall and performance; none is claimed passed before that result arrives.
 
-- `summary.json` is PASS;
-- `lib=vsag` DDL/build/query still works;
-- CAGRA snapshot serialize/deserialize round-trips with the same shape;
-- Top-10/Top-100 return k distinct valid IDs;
-- Recall gates from the contest statement are met on both official datasets.
+For independently reproducible local validation, the missing checks remain:
+
+1. Compile against the actual deployed hipVS/ROCm SDK, without MOCK headers,
+   and confirm the required exports.
+2. Run GPU/CPU fallback smoke, actual snapshot round-trip, and representative
+   recall/VRAM checks. The repository smoke is a 10K x 128 synthetic functional
+   test, not the official Hidden250K score protocol.
+3. Compare on the same GPU/data with repeated runs, separating upload, graph
+   build, serialization and first-query time. Do not derive a predicted score
+   from the 40/50-iteration comparisons or treat device-memory samples as peaks.
+
+No new official result or full-score claim exists when this report is prepared.
+

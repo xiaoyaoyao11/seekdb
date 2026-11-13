@@ -3,31 +3,27 @@
  * Contest optimization for the AMD hipVS CAGRA build path.  The public C ABI
  * in seekdb_cuvs_bridge.h is unchanged.
  *
- * Build-side changes (the scored path):
- *   - 128-d data: NN-descent with graph_degree=96, intermediate=128 and 20
- *     iterations.  The frozen baseline uses 128/256/100; the extra degree and
- *     80 extra descent iterations do not change recall on 250K-scale data but
- *     dominate build time.
- *   - >128-d data: NN-descent with the baseline final degree 128, intermediate
- *     160 and 40 iterations.  Intermediate 128 fails the Hidden250K recall@100
- *     gate and the search queue cannot be widened past the baseline 512
- *     (768 and 1024 both abort the GPU query path), so recall margin has to
- *     come from the descent budget: 40 iterations is the first point above
- *     the failing 30-iteration run.  This targets the contest score, which
- *     measures BUILD speedup (not query speedup).
+ * Build settings retained from the passing v9 checkpoint:
+ *   - <=128-d data: NN-descent, final/intermediate/iterations 96/128/20.
+ *   - >128-d data: NN-descent, final/intermediate/iterations 128/160/40.
+ *     The official v9 result is build=1.876x, query=1.024x, gates=pass
+ *     (12.133 points). This was not faster than the earlier 50-iteration
+ *     run; a linear cost estimate is not evidence of score improvement.
  *
- * Query-side changes (the 2-point throughput component):
- *   - The three device staging buffers and cuvsCagraSearchParams are created
- *     once per index handle and reused.  The baseline allocates/frees three
- *     device buffers and creates/destroys the search params on every
- *     single-row query; hipMalloc/hipFree are synchronous and expensive.
- *   - itopk_size is fixed at the baseline max(4*topk, 512).  Halving it to
- *     max(2*topk, 256) broke the official Hidden250K recall gates; widening
- *     it to 768/1024 broke the gpu_path gate.  The staging-buffer reuse is
- *     what carries the throughput component.
- *   - cudaDeviceSynchronize() is issued before the D2H copy.  cuVS executes
- *     the search on its internal stream; reading the result tensor without a
- *     wait can race the kernel.
+ * Query-side settings and runtime candidate:
+ *   - Reuse the three single-row device staging buffers and search params,
+ *     as in v9. The measurements do not isolate the benefit of this reuse.
+ *   - Retain itopk_size=max(4*topk,512) and search_width=4. Earlier wider
+ *     queues failed the aggregate gpu_path gate; this does not establish a
+ *     hardware queue-size limit or identify the failing operation.
+ *   - cuvsStreamSync() waits for this index before the D2H copy, rather than
+ *     waiting for every device stream.  Failed search calls are also drained
+ *     before buffer reuse/free; a stream error falls back to a device drain.
+ *     Batch allocation failures release previously allocated buffers. If both
+ *     waits fail, the handle is poisoned and retains queued buffers instead
+ *     of recycling them; cleanup releases them only after a successful drain.
+ *     Dataset/query byte counts are checked for size_t multiplication overflow.
+ *     These changes have MOCK coverage, not GPU performance evidence.
  *
  * The SQL surface, FP32 semantics, CAGRA search implementation and snapshot
  * format are unchanged.
@@ -65,8 +61,23 @@ typedef struct {
   cuvsCagraSearchParams_t sp;
   long      sp_topk;
 
+  /* A failed device drain must not let outstanding work see recycled memory.
+   * Only one failed batch can be retained: poisoned handles reject new work. */
+  int poisoned;
+  float* retired_qd;
+  unsigned* retired_nd;
+  float* retired_dd;
+  size_t retired_q_bytes, retired_id_bytes, retired_dist_bytes;
+
   pthread_mutex_t mu;
 } sk_cuvs_index;
+
+static int sk_size_product(size_t a, size_t b, size_t* out)
+{
+  if (b && a > SIZE_MAX / b) return 1;
+  *out = a * b;
+  return 0;
+}
 
 static void sk_fill_tensor(DLManagedTensor* t, void* data, int64_t* shape, int ndim,
                            DLDeviceType dev, DLDataTypeCode code, int bits)
@@ -86,9 +97,8 @@ static void sk_fill_tensor(DLManagedTensor* t, void* data, int64_t* shape, int n
   t->deleter = NULL;
 }
 
-/* Graph shape is a function of dimensionality.  The 256-d hidden workload is
- * sensitive to the final degree and to VRAM use, while the 128-d workload is
- * not.  Both paths therefore use NN-descent; only the graph budget differs. */
+/* Retain the passing dimension-dependent graph budgets. These sampled
+ * results do not establish general recall or VRAM bounds for either path. */
 static void sk_load_build_params(cuvsCagraIndexParams_t ip, long dim)
 {
   const int low_dim = dim <= 128;
@@ -102,12 +112,11 @@ static void sk_load_build_params(cuvsCagraIndexParams_t ip, long dim)
    *   160/30  -> recall@100, 0 (queue 512)
    *   160/30 + itopk 1024 -> gpu_path, 0
    *   160/30 + itopk 768  -> gpu_path, 0
-   * Two conclusions: intermediate=160 is the lowest safe value, and the
-   * search queue cannot exceed the baseline 512 on this hipVS/GPU pair
-   * (both 1024 and 768 abort the first query).  v9 therefore stops touching
-   * the query path and only splits the descent budget: 40 iterations keeps
-   * a margin above the failing 30-iteration point while removing 10
-   * iterations (~3.5 s) from the 160/50 build. */
+   *   160/40  -> build=1.876x, query=1.024x, 12.133, gates=pass
+   * These observations do not prove a universal intermediate-degree or
+   * queue-size bound.  Keep v9's passing graph shape while investigating
+   * runtime overhead; no further build-parameter sweep is justified by
+   * the observed 40/50-iteration results. */
   ip->intermediate_graph_degree = low_dim ? 128 : 160;
   ip->nn_descent_niter = low_dim ? 20 : 40;
 }
@@ -179,11 +188,9 @@ static int sk_tune_search_params(sk_cuvs_index* h, long topk)
   }
   if (h->sp_topk == topk) return 0;
 
-  /* Baseline queue.  v7 (1024) and v8 (768) both failed the gpu_path gate:
-   * the first single-row search aborts before any recall gate runs, so
-   * anything above 512 is unusable on this hipVS/GPU pair.  Recall must
-   * therefore be bought on the build side (see sk_load_build_params), not
-   * by widening the queue.  search_width stays at 4. */
+  /* Preserve the passing search budget. v7/v8 failed gpu_path, but that
+   * aggregate gate does not identify the root cause or establish a queue
+   * size limit. Do not infer a hardware bound from those failures. */
   size_t itopk = (size_t)topk * 4;
   if (itopk < 512) itopk = 512;
   if (itopk < (size_t)topk) itopk = (size_t)topk;
@@ -193,8 +200,29 @@ static int sk_tune_search_params(sk_cuvs_index* h, long topk)
   return 0;
 }
 
+/* Wait only for this index's work.  If the resource stream reports an
+ * error, preserve failure status and try a device-wide drain before the
+ * caller reuses or releases staging buffers. */
+static int sk_wait_for_index(sk_cuvs_index* h)
+{
+  if (cuvsStreamSync(h->res) == CUVS_SUCCESS) {
+    h->poisoned = 0;
+    return 0;
+  }
+  if (cudaDeviceSynchronize() != cudaSuccess) {
+    h->poisoned = 1;
+    return 2;
+  }
+  h->poisoned = 0;
+  return 1;
+}
+
 void* seekdb_cuvs_build(const float* base, long n, long dim)
 {
+  size_t elements, bytes;
+  if (!base || n <= 0 || dim <= 0 ||
+      sk_size_product((size_t)n, (size_t)dim, &elements) ||
+      sk_size_product(elements, sizeof(float), &bytes)) return NULL;
   sk_cuvs_index* h = (sk_cuvs_index*)calloc(1, sizeof(*h));
   if (!h) return NULL;
   if (pthread_mutex_init(&h->mu, NULL) != 0) {
@@ -237,10 +265,18 @@ int seekdb_cuvs_search(void* handle, const float* query, long nq, long topk,
                        unsigned int* out_ids, float* out_dist)
 {
   sk_cuvs_index* h = (sk_cuvs_index*)handle;
-  if (!h || !query || !out_ids || nq <= 0 || topk <= 0) return 1;
+  if (!h || !query || !out_ids || nq <= 0 || topk <= 0 || topk > h->n) return 1;
+
+  size_t query_elements, result_elements, query_bytes, id_bytes, dist_bytes;
+  if (sk_size_product((size_t)nq, (size_t)h->dim, &query_elements) ||
+      sk_size_product(query_elements, sizeof(float), &query_bytes) ||
+      sk_size_product((size_t)nq, (size_t)topk, &result_elements) ||
+      sk_size_product(result_elements, sizeof(unsigned), &id_bytes) ||
+      sk_size_product(result_elements, sizeof(float), &dist_bytes)) return 1;
 
   int rc = 0;
   pthread_mutex_lock(&h->mu);
+  if (h->poisoned) { rc = 27; goto done; }
 
   if (nq == 1) {
     if (sk_ensure_staging(h, topk) != 0) { rc = 20; goto done; }
@@ -258,12 +294,12 @@ int seekdb_cuvs_search(void* handle, const float* query, long nq, long topk,
       cuvsFilter f;
       f.type = NO_FILTER;
       f.addr = (uintptr_t)0;
-      if (cuvsCagraSearch(h->res, h->sp, h->idx, &qt, &nt, &dt, f) != CUVS_SUCCESS) {
-        rc = 23;
-        goto done;
-      }
-      /* Search runs on the cuVS stream; wait before reading the result. */
-      if (cudaDeviceSynchronize() != cudaSuccess) { rc = 24; goto done; }
+      const cuvsError_t search_rc = cuvsCagraSearch(h->res, h->sp, h->idx, &qt, &nt, &dt, f);
+      /* A failed library call may still have enqueued work. Drain it before
+       * staging can be reused, including the error-return path. */
+      const int wait_rc = sk_wait_for_index(h);
+      if (search_rc != CUVS_SUCCESS) { rc = 23; goto done; }
+      if (wait_rc != 0) { rc = 24; goto done; }
       if (cudaMemcpy(out_ids, h->ids_dev, sizeof(unsigned) * topk, cudaMemcpyDefault) != cudaSuccess) {
         rc = 25;
         goto done;
@@ -277,10 +313,10 @@ int seekdb_cuvs_search(void* handle, const float* query, long nq, long topk,
     float* qd = NULL;
     unsigned* nd = NULL;
     float* dd = NULL;
-    if (cuvsRMMAlloc(h->res, (void**)&qd, sizeof(float) * nq * h->dim) != CUVS_SUCCESS) { rc = 10; goto done; }
-    if (cuvsRMMAlloc(h->res, (void**)&nd, sizeof(unsigned) * nq * topk) != CUVS_SUCCESS) { rc = 11; goto done; }
-    if (cuvsRMMAlloc(h->res, (void**)&dd, sizeof(float) * nq * topk) != CUVS_SUCCESS) { rc = 12; goto done; }
-    if (cudaMemcpy(qd, query, sizeof(float) * nq * h->dim, cudaMemcpyDefault) != cudaSuccess) { rc = 13; goto done_batch; }
+    if (cuvsRMMAlloc(h->res, (void**)&qd, query_bytes) != CUVS_SUCCESS) { rc = 10; goto done_batch; }
+    if (cuvsRMMAlloc(h->res, (void**)&nd, id_bytes) != CUVS_SUCCESS) { rc = 11; goto done_batch; }
+    if (cuvsRMMAlloc(h->res, (void**)&dd, dist_bytes) != CUVS_SUCCESS) { rc = 12; goto done_batch; }
+    if (cudaMemcpy(qd, query, query_bytes, cudaMemcpyDefault) != cudaSuccess) { rc = 13; goto done_batch; }
     if (sk_tune_search_params(h, topk) != 0) { rc = 14; goto done_batch; }
     {
       DLManagedTensor qt, nt, dt;
@@ -291,24 +327,32 @@ int seekdb_cuvs_search(void* handle, const float* query, long nq, long topk,
       cuvsFilter f;
       f.type = NO_FILTER;
       f.addr = (uintptr_t)0;
-      if (cuvsCagraSearch(h->res, h->sp, h->idx, &qt, &nt, &dt, f) != CUVS_SUCCESS) {
-        rc = 15;
-        goto done_batch;
-      }
-      if (cudaDeviceSynchronize() != cudaSuccess) { rc = 16; goto done_batch; }
-      if (cudaMemcpy(out_ids, nd, sizeof(unsigned) * nq * topk, cudaMemcpyDefault) != cudaSuccess) {
+      const cuvsError_t search_rc = cuvsCagraSearch(h->res, h->sp, h->idx, &qt, &nt, &dt, f);
+      const int wait_rc = sk_wait_for_index(h);
+      if (search_rc != CUVS_SUCCESS) { rc = 15; goto done_batch; }
+      if (wait_rc != 0) { rc = 16; goto done_batch; }
+      if (cudaMemcpy(out_ids, nd, id_bytes, cudaMemcpyDefault) != cudaSuccess) {
         rc = 17;
         goto done_batch;
       }
-      if (out_dist && cudaMemcpy(out_dist, dd, sizeof(float) * nq * topk, cudaMemcpyDefault) != cudaSuccess) {
+      if (out_dist && cudaMemcpy(out_dist, dd, dist_bytes, cudaMemcpyDefault) != cudaSuccess) {
         rc = 18;
         goto done_batch;
       }
     }
 done_batch:
-    if (dd) cuvsRMMFree(h->res, dd, sizeof(float) * nq * topk);
-    if (nd) cuvsRMMFree(h->res, nd, sizeof(unsigned) * nq * topk);
-    if (qd) cuvsRMMFree(h->res, qd, sizeof(float) * nq * h->dim);
+    if (h->poisoned) {
+      h->retired_qd = qd;
+      h->retired_nd = nd;
+      h->retired_dd = dd;
+      h->retired_q_bytes = query_bytes;
+      h->retired_id_bytes = id_bytes;
+      h->retired_dist_bytes = dist_bytes;
+    } else {
+      if (dd) cuvsRMMFree(h->res, dd, dist_bytes);
+      if (nd) cuvsRMMFree(h->res, nd, id_bytes);
+      if (qd) cuvsRMMFree(h->res, qd, query_bytes);
+    }
   }
 
 done:
@@ -321,6 +365,15 @@ void seekdb_cuvs_free(void* handle)
 {
   sk_cuvs_index* h = (sk_cuvs_index*)handle;
   if (!h) return;
+  if (h->poisoned && sk_wait_for_index(h) == 2) {
+    /* An unusable device cannot be drained safely. Retain this handle and
+     * its allocations until a successful cleanup retry or process exit. */
+    fprintf(stderr, "[seekdb_cuvs] retaining buffers after failed device drain\n");
+    return;
+  }
+  if (h->retired_dd) cuvsRMMFree(h->res, h->retired_dd, h->retired_dist_bytes);
+  if (h->retired_nd) cuvsRMMFree(h->res, h->retired_nd, h->retired_id_bytes);
+  if (h->retired_qd) cuvsRMMFree(h->res, h->retired_qd, h->retired_q_bytes);
   sk_free_staging(h);
   cuvsCagraIndexDestroy(h->idx);
   cuvsCagraIndexParamsDestroy(h->ip);
@@ -332,7 +385,7 @@ void seekdb_cuvs_free(void* handle)
 int seekdb_cuvs_serialize(void* handle, const char* filename)
 {
   sk_cuvs_index* index = (sk_cuvs_index*)handle;
-  if (!index || !filename) return 1;
+  if (!index || !filename || index->poisoned) return 1;
   if (cuvsCagraSerialize(index->res, filename, index->idx, true) != CUVS_SUCCESS) {
     fprintf(stderr, "[seekdb_cuvs] serialize failed: %s\n", cuvsGetLastErrorText());
     return 1;
@@ -342,7 +395,10 @@ int seekdb_cuvs_serialize(void* handle, const char* filename)
 
 void* seekdb_cuvs_deserialize(const char* filename, long n, long dim)
 {
-  if (!filename || n <= 0 || dim <= 0) return NULL;
+  size_t elements, bytes;
+  if (!filename || n <= 0 || dim <= 0 ||
+      sk_size_product((size_t)n, (size_t)dim, &elements) ||
+      sk_size_product(elements, sizeof(float), &bytes)) return NULL;
   sk_cuvs_index* index = (sk_cuvs_index*)calloc(1, sizeof(*index));
   if (!index) return NULL;
   if (pthread_mutex_init(&index->mu, NULL) != 0) {
