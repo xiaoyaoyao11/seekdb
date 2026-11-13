@@ -1199,6 +1199,118 @@ int ObAIFuncUtils::set_string_result(const ObExpr &expr, ObEvalCtx &ctx, ObDatum
   return ret;
 }
 
+static inline bool is_ai_space_char(const char c)
+{
+  return ' ' == c || '\t' == c || '\n' == c || '\r' == c;
+}
+
+// Parse one base-10 integer.  The answer of the model must be an integer
+// without any other character but the optional sign, the digits and the
+// surrounding white spaces.
+static int parse_ai_decimal_integer(const ObString &str, int64_t &value)
+{
+  int ret = OB_SUCCESS;
+  value = 0;
+  const char *ptr = str.ptr();
+  const int64_t len = str.length();
+  int64_t i = 0;
+  bool negative = false;
+  bool has_digit = false;
+  int64_t number = 0;
+  if (OB_ISNULL(ptr) || len <= 0) {
+    ret = OB_INVALID_ARGUMENT;
+  } else {
+    while (i < len && is_ai_space_char(ptr[i])) {
+      ++i;
+    }
+    if (i < len && ('-' == ptr[i] || '+' == ptr[i])) {
+      negative = ('-' == ptr[i]);
+      ++i;
+    }
+    for (; OB_SUCC(ret) && i < len; ++i) {
+      const char c = ptr[i];
+      if (c >= '0' && c <= '9') {
+        has_digit = true;
+        if (number > (INT64_MAX - (c - '0')) / 10) {
+          ret = OB_INVALID_ARGUMENT;
+          break;
+        }
+        number = number * 10 + (c - '0');
+      } else if (is_ai_space_char(c)) {
+        break;
+      } else {
+        ret = OB_INVALID_ARGUMENT;
+        break;
+      }
+    }
+    for (; OB_SUCC(ret) && i < len; ++i) {
+      if (!is_ai_space_char(ptr[i])) {
+        ret = OB_INVALID_ARGUMENT;
+        break;
+      }
+    }
+    if (OB_SUCC(ret) && !has_digit) {
+      ret = OB_INVALID_ARGUMENT;
+    }
+    if (OB_SUCC(ret)) {
+      value = negative ? -number : number;
+    }
+  }
+  return ret;
+}
+
+int ObAIFuncUtils::convert_ai_result_to_target_type(ObIAllocator &allocator,
+                                                    ObObjType target_type,
+                                                    const ObString &model_text,
+                                                    ObString &result)
+{
+  int ret = OB_SUCCESS;
+  if (ob_is_json(target_type)) {
+    // the answer of the model must be one valid JSON value
+    ObIJsonBase *j_base = NULL;
+    if (OB_FAIL(ObJsonBaseFactory::get_json_base(&allocator, model_text,
+                                                  ObJsonInType::JSON_TREE,
+                                                  ObJsonInType::JSON_TREE,
+                                                  j_base))) {
+      ret = OB_ERR_INVALID_JSON_TEXT;
+      LOG_USER_ERROR(OB_ERR_INVALID_JSON_TEXT);
+    } else {
+      result = model_text;
+    }
+  } else if (ob_is_integer_type(target_type)) {
+    // the answer of the model must be one base-10 integer
+    int64_t value = 0;
+    if (OB_FAIL(parse_ai_decimal_integer(model_text, value))) {
+      ret = OB_INVALID_ARGUMENT;
+      LOG_USER_ERROR(OB_INVALID_ARGUMENT,
+                     "ai_complete, the answer of the model is not one base-10 integer");
+    } else if (ObUInt64Type == target_type && value < 0) {
+      ret = OB_INVALID_ARGUMENT;
+      LOG_USER_ERROR(OB_INVALID_ARGUMENT,
+                     "ai_complete, the answer of the model is not one base-10 integer");
+    } else {
+      // normalize the answer to its canonical decimal form
+      char buf[32];
+      const int64_t len = snprintf(buf, sizeof(buf), "%ld", value);
+      if (len <= 0 || len >= static_cast<int64_t>(sizeof(buf))) {
+        ret = OB_ERR_UNEXPECTED;
+      } else {
+        char *out = static_cast<char *>(allocator.alloc(len));
+        if (OB_ISNULL(out)) {
+          ret = OB_ALLOCATE_MEMORY_FAILED;
+        } else {
+          MEMCPY(out, buf, len);
+          result.assign(len, out);
+        }
+      }
+    }
+  } else {
+    // a string column takes the answer of the model as it is
+    result = model_text;
+  }
+  return ret;
+}
+
 int ObAIFuncUtils::get_ai_func_info(ObIAllocator &allocator, const ObString &model_id,
                                     share::schema::ObSchemaGetterGuard &guard,
                                     ObAIFuncExprInfo *&info)
@@ -1312,13 +1424,21 @@ int ObAIFuncUtils::get_ai_func_info(ObIAllocator &allocator, const ObString &mod
 
 int ObAIFuncModel::call_completion(ObString &prompt, ObJsonObject *config, ObString &result)
 {
+  ObString system_prompt;
+  return call_completion_with_system_prompt(system_prompt, prompt, config, result);
+}
+
+int ObAIFuncModel::call_completion_with_system_prompt(ObString &system_prompt,
+                                                      ObString &content,
+                                                      ObJsonObject *config,
+                                                      ObString &result)
+{
   int ret = OB_SUCCESS;
   ObArray<ObString> headers;
   ObJsonObject *body = nullptr;
   ObJsonObject *response = nullptr;
   ObIJsonBase *result_base = nullptr;
   ObAIFuncIComplete *complete_provider = nullptr;
-  ObString prompt_str;
   ObString result_str;
   ObAIFuncClient client;
   ObString unencrypted_access_key;
@@ -1329,7 +1449,7 @@ int ObAIFuncModel::call_completion(ObString &prompt, ObJsonObject *config, ObStr
   } else if (OB_FAIL(ObAIFuncUtils::get_complete_provider(*allocator_, endpoint_info_.get_provider(), complete_provider))) {
   } else if (OB_FAIL(endpoint_info_.get_unencrypted_access_key(*allocator_, unencrypted_access_key))) {
   } else if (OB_FAIL(complete_provider->get_header(*allocator_, unencrypted_access_key, headers))) {
-  } else if (OB_FAIL(complete_provider->get_body(*allocator_, request_model_name, prompt_str, prompt, config, body))) {
+  } else if (OB_FAIL(complete_provider->get_body(*allocator_, request_model_name, system_prompt, content, config, body))) {
   } else if (OB_FAIL(client.send_post(*allocator_, endpoint_info_.get_url(), headers, body, response))) {
   } else if (OB_FAIL(complete_provider->parse_output(*allocator_, response, result_base))) {
   } else if (OB_FAIL(ObAIFuncJsonUtils::print_json_to_str(*allocator_, result_base, result_str))) {
@@ -1346,7 +1466,7 @@ int ObAIFuncModel::call_completion(ObString &prompt, ObJsonObject *config, ObStr
     } else {
       FORWARD_USER_ERROR(ret, "unexpected http message");
     }
-  } 
+  }
   return ret;
 }
 

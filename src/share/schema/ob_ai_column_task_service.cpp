@@ -97,6 +97,25 @@ int ObAiColumnTaskService::delete_tasks(common::ObISQLClient &sql_client,
   return ret;
 }
 
+int ObAiColumnTaskService::delete_tasks_by_predicate(common::ObISQLClient &sql_client,
+                                                      const common::ObString &rowkey_predicate)
+{
+  int ret = OB_SUCCESS;
+  common::ObSqlString buffer;
+  int64_t affected_rows = 0;
+  if (rowkey_predicate.empty()) {
+    ret = OB_INVALID_ARGUMENT;
+  } else if (OB_FAIL(buffer.append_fmt("DELETE FROM %s WHERE rowkey_predicate = '%.*s'",
+                                       OB_ALL_AI_COLUMN_TASK_TNAME,
+                                       rowkey_predicate.length(),
+                                       rowkey_predicate.ptr()))) {
+  } else if (OB_FAIL(sql_client.write(buffer.ptr(), affected_rows))) {
+  } else {
+    UNUSED(affected_rows);
+  }
+  return ret;
+}
+
 } // end namespace schema
 } // end namespace share
 } // end namespace oceanbase

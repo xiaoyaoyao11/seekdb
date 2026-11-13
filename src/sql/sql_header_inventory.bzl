@@ -203,6 +203,7 @@ SQL_INTERFACE_CLOSURE_HEADERS = [
     "engine/basic/ob_temp_block_store.h",
     "engine/basic/ob_temp_column_store.h",
     "engine/cmd/ob_load_data_parser.h",
+    "engine/dml/ob_ai_column_task_creator.h",
     "engine/dml/ob_dml_ctx_define.h",
     "engine/dml/ob_fk_checker.h",
     "engine/dml/ob_table_modify_op.h",

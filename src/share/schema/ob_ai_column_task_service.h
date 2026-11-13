@@ -73,6 +73,14 @@ public:
                            const int64_t column_id);
 
   /**
+   * Delete the task rows which address one row through its primary key
+   * predicate.  It is used when a row is deleted, so that its pending tasks
+   * do not survive the row.
+   */
+  static int delete_tasks_by_predicate(common::ObISQLClient &sql_client,
+                                        const common::ObString &rowkey_predicate);
+
+  /**
    * Delete one task row by its id.
    */
   static int delete_task(common::ObISQLClient &sql_client, const int64_t task_id);

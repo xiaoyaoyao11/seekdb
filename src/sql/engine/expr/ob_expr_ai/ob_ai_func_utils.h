@@ -329,6 +329,26 @@ public:
                                  ObJsonObject *http_response,
                                  ObIJsonBase *&result);
   static int set_string_result(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &res, ObString &res_str);
+  /**
+   * Convert the answer of the model into the type of the column which
+   * receives it.
+   *
+   * The AI expression always returns a string, but the AI column may be a
+   * JSON column or an integer column.  The conversion is driven by the type
+   * of the target column:
+   *
+   *   JSON    -> the answer must be one valid JSON value
+   *   integer -> the answer must be one base-10 integer, it is normalized to
+   *              its canonical decimal form
+   *   other   -> the answer is taken as it is
+   *
+   * An answer which does not fit the type of the target column is rejected,
+   * so that the AI column task is retried instead of storing a wrong value.
+   */
+  static int convert_ai_result_to_target_type(ObIAllocator &allocator,
+                                               ObObjType target_type,
+                                               const ObString &model_text,
+                                               ObString &result);
   static bool is_provider_support_base64(const ObString &provider);
   static int decode_base64_embedding_array(const ObIJsonBase &embedding_jbase, ObIAllocator &allocator,
                                            const int64_t dimension, float *&vector);
@@ -353,6 +373,18 @@ public:
    virtual ~ObAIFuncModel() {}
    // completion
    int call_completion(ObString &prompt, ObJsonObject *config, ObString &result);
+   /**
+    * Send the system prompt as the system message and the content as the user
+    * message of the model request.
+    *
+    * The AI column worker publishes the normalized AI expression (the AI
+    * expression with the type specific instruction prepended) as the system
+    * message and the evaluated prompt expression as the user message.
+    */
+   int call_completion_with_system_prompt(ObString &system_prompt,
+                                          ObString &content,
+                                          ObJsonObject *config,
+                                          ObString &result);
    int call_completion_vector(ObArray<ObString> &prompts, ObJsonObject *config, ObArray<ObString> &results);
    // dense_embedding
    int call_dense_embedding(ObString &content, ObJsonObject *config, ObString &result);
