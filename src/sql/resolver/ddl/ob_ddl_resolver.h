@@ -539,6 +539,8 @@ protected:
   int resolve_ai_column_attribute(share::schema::ObColumnSchemaV2 &column,
                                   ParseNode *attr_node,
                                   ObColumnResolveStat &reslove_stat);
+  int check_ai_column_expr(const share::schema::ObColumnSchemaV2 &column,
+                           const common::ObString &expr);
   int resolve_normal_column_attribute_check_cons(ObColumnSchemaV2 &column,
                                                  ParseNode *attrs_node,
                                                  ObCreateTableStmt *create_table_stmt);
