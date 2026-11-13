@@ -31,6 +31,7 @@
 #include "query/ddl/ob_dynamic_partition_policy.h"
 #include "share/rc/ob_server_runtime.h"
 #include "share/schema/ob_table_schema.h"
+#include "share/schema/ob_ai_column_util.h"
 #include "sql/engine/expr/ob_obj_cast_runtime.h"
 
 namespace oceanbase
@@ -2418,13 +2419,21 @@ int ObDDLResolver::resolve_ai_column_attribute(ObColumnSchemaV2 &column,
     } else if (OB_FAIL(ObSQLUtils::convert_sql_text_to_schema_for_storing(
                    *allocator_, session_info_->get_dtc_params(), expr_str))) {
     } else if (OB_FAIL(check_ai_column_expr(column, expr_str))) {
-    } else if (OB_FAIL(column.set_ai_column_meta(expr_str, sync_mode,
-                                                 static_cast<int8_t>(max_retries)))) {
     } else {
-      column.set_ai_column();
-      column.set_nullable(true);
-      SQL_RESV_LOG(INFO, "resolve ai column attribute", K(expr_str), K(max_retries),
-                   K(column.get_column_name_str()));
+      // The normalized expression carries the type specific system
+      // instruction, so that the model is asked for a value of the target
+      // column type (a JSON value, a base-10 integer, ...).
+      ObString normalized_expr;
+      if (OB_FAIL(ObAiColumnUtil::build_normalized_expr(*allocator_, expr_str,
+                                                          column, normalized_expr))) {
+      } else if (OB_FAIL(column.set_ai_column_meta(expr_str, normalized_expr, sync_mode,
+                                                   static_cast<int8_t>(max_retries)))) {
+      } else {
+        column.set_ai_column();
+        column.set_nullable(true);
+        SQL_RESV_LOG(INFO, "resolve ai column attribute", K(expr_str), K(normalized_expr),
+                     K(max_retries), K(column.get_column_name_str()));
+      }
     }
   }
   return ret;

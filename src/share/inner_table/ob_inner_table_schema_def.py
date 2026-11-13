@@ -6385,12 +6385,31 @@ def_table_schema(
   ],
 )
 
+# 12565: __all_ai_column
+def_table_schema(
+  owner = 'seekdb.ai_column',
+  table_name    = '__all_ai_column',
+  table_id      = '12565',
+  table_type = 'VIRTUAL_TABLE',
+  gm_columns = [],
+  rowkey_columns = [],
+  normal_columns = [
+    ('table_id', 'int'),
+    ('column_id', 'int'),
+    ('column_name', 'varchar:OB_MAX_COLUMN_NAME_LENGTH', 'false', ''),
+    ('max_retries', 'int', 'false', '0'),
+    ('normalized_expr', 'longtext'),
+    ('state_column_id', 'int', 'false', '0'),
+    ('request_column_id', 'int', 'false', '0'),
+    ('result_spec_column_id', 'int', 'false', '0'),
+  ],
+)
+
 # Reserved position (placeholder before this line)
 # Placeholder suggestion for this section: Use actual table names for placeholders
 ################################################################################
 # End of Mysql Virtual Table (10000, 15000]
-################################################################################
-################################### Placeholder Notice ###################################
+################################################################################################################### Placeholder Notice ###################################
 # Placeholder example: Write the comment at the beginning of the line, indicating which TABLE_ID to occupy and the corresponding name
 # TABLE_ID: TABLE_NAME
 #

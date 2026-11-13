@@ -85,6 +85,7 @@ int ObColumnSchemaV2::assign(const ObColumnSchemaV2 &src_schema)
     } else if (OB_FAIL(deep_copy_str(src_schema.column_name_, column_name_))) {
     } else if (OB_FAIL(deep_copy_str(src_schema.comment_, comment_))) {
     } else if (OB_FAIL(deep_copy_str(src_schema.ai_column_expr_, ai_column_expr_))) {
+    } else if (OB_FAIL(deep_copy_str(src_schema.ai_normalized_expr_, ai_normalized_expr_))) {
     } else if (OB_FAIL(set_extended_type_info(src_schema.extended_type_info_))) {
     } else if (src_schema.column_ref_idxs_ != NULL) {
       if (OB_FAIL(alloc_column_ref_set())) {
@@ -127,6 +128,7 @@ int64_t ObColumnSchemaV2::get_convert_size() const
     convert_size += sizeof(ColumnReferenceSet);
   }
   convert_size += ai_column_expr_.length() + 1;
+  convert_size += ai_normalized_expr_.length() + 1;
   convert_size += extended_type_info_.count() * static_cast<int64_t>(sizeof(ObString));
   for (int64_t i = 0; i < extended_type_info_.count(); ++i) {
     convert_size += extended_type_info_.at(i).length() + 1;
@@ -192,6 +194,7 @@ void ObColumnSchemaV2::reset()
   skip_index_attr_.reset();
   lob_chunk_size_ = OB_DEFAULT_LOB_CHUNK_SIZE;
   ai_column_expr_.reset();
+  ai_normalized_expr_.reset();
   ai_sync_mode_ = 0;
   ai_max_retries_ = 0;
   local_session_vars_.reset();
@@ -203,7 +206,13 @@ int ObColumnSchemaV2::set_ai_column_expr(const common::ObString &expr)
   return deep_copy_str(expr, ai_column_expr_);
 }
 
+int ObColumnSchemaV2::set_ai_normalized_expr(const common::ObString &expr)
+{
+  return deep_copy_str(expr, ai_normalized_expr_);
+}
+
 int ObColumnSchemaV2::set_ai_column_meta(const common::ObString &expr,
+                                         const common::ObString &normalized_expr,
                                          const int8_t sync_mode,
                                          const int8_t max_retries)
 {
@@ -214,6 +223,7 @@ int ObColumnSchemaV2::set_ai_column_meta(const common::ObString &expr,
   int head_len = 0;
   char *buf = NULL;
   if (OB_FAIL(deep_copy_str(expr, ai_column_expr_))) {
+  } else if (OB_FAIL(deep_copy_str(normalized_expr, ai_normalized_expr_))) {
   } else {
     head_len = snprintf(head, sizeof(head), "ob_ai:s=%d;r=%d;e=",
                         static_cast<int>(sync_mode), static_cast<int>(max_retries));
@@ -319,6 +329,7 @@ OB_DEF_SERIALIZE(ObColumnSchemaV2)
                 skip_index_attr_,
                 lob_chunk_size_,
                 ai_column_expr_,
+                ai_normalized_expr_,
                 ai_sync_mode_,
                 ai_max_retries_,
                 local_session_vars_);
@@ -335,6 +346,7 @@ OB_DEF_DESERIALIZE(ObColumnSchemaV2)
   ObString column_name;
   ObString comment;
   ObString ai_column_expr;
+  ObString ai_normalized_expr;
   bool has_column_ref = false;
 
   LST_DO_CODE(OB_UNIS_DECODE,
@@ -376,6 +388,7 @@ OB_DEF_DESERIALIZE(ObColumnSchemaV2)
   } else if (OB_FAIL(deep_copy_str(column_name, column_name_))) {
   } else if (OB_FAIL(deep_copy_str(comment, comment_))) {
   } else if (OB_FAIL(deep_copy_str(ai_column_expr, ai_column_expr_))) {
+  } else if (OB_FAIL(deep_copy_str(ai_normalized_expr, ai_normalized_expr_))) {
   } else {
     LST_DO_CODE(OB_UNIS_DECODE,
                 srs_id_,
@@ -384,6 +397,7 @@ OB_DEF_DESERIALIZE(ObColumnSchemaV2)
                 skip_index_attr_,
                 lob_chunk_size_,
                 ai_column_expr,
+                ai_normalized_expr,
                 ai_sync_mode_,
                 ai_max_retries_,
                 local_session_vars_);
@@ -434,6 +448,7 @@ OB_DEF_SERIALIZE_SIZE(ObColumnSchemaV2)
               skip_index_attr_,
               lob_chunk_size_,
               ai_column_expr_,
+              ai_normalized_expr_,
               ai_sync_mode_,
               ai_max_retries_,
               local_session_vars_);
