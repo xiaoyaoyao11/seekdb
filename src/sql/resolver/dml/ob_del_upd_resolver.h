@@ -72,6 +72,16 @@ protected:
 
   int resolve_additional_assignments(common::ObIArray<ObTableAssignment> &table_assigns,
                                      const ObStmtScope scope);
+  /**
+   * Reset the AI columns whose expression depends on one of the columns which
+   * the statement updates.  The AI column value is invalidated in the same
+   * statement, so that the new value is produced asynchronously by the worker.
+   */
+  int invalidate_ai_columns(common::ObIArray<ObTableAssignment> &table_assigns,
+                             const ObStmtScope scope);
+  int add_ai_column_null_assignment(common::ObIArray<ObTableAssignment> &table_assigns,
+                                     const TableItem *table_item,
+                                     const share::schema::ObColumnSchemaV2 &ai_column);
   int generate_wrapper_expr_for_assignemnts(common::ObIArray<ObAssignment> &assigns,
                                             bool has_before_trigger);
 

@@ -17,6 +17,7 @@
 #define USING_LOG_PREFIX SQL_RESV
 #include "ob_del_upd_resolver.h"
 #include "sql/resolver/dml/ob_default_value_utils.h"
+#include "sql/resolver/dml/ob_ai_column_dml_util.h"
 #include "sql/resolver/dml/ob_update_stmt.h"
 #include "sql/resolver/dml/ob_insert_stmt.h"
 #include "sql/rewrite/ob_transform_utils.h"
@@ -624,11 +625,94 @@ int ObDelUpdResolver::resolve_additional_assignments(ObIArray<ObTableAssignment>
   return ret;
 }
 
+int ObDelUpdResolver::add_ai_column_null_assignment(
+    ObIArray<ObTableAssignment> &assigns,
+    const TableItem *table_item,
+    const ObColumnSchemaV2 &ai_column)
+{
+  int ret = OB_SUCCESS;
+  ObAssignment assignment;
+  ObSEArray<ObColumnRefRawExpr *, 1> col_exprs;
+  ColumnItem *col_item = NULL;
+  ObDMLStmt *stmt = get_stmt();
+  if (OB_ISNULL(stmt) || OB_ISNULL(params_.expr_factory_)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(add_column_to_stmt(*table_item, ai_column, col_exprs))) {
+  } else if (col_exprs.empty()) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_ISNULL(col_item = stmt->get_column_item_by_id(
+                     table_item->table_id_, col_exprs.at(0)->get_column_id()))) {
+    ret = OB_ERR_UNEXPECTED;
+  } else {
+    // the AI column is reset to NULL: the worker recomputes the value
+    // asynchronously and publishes it later.  The column is always nullable,
+    // so no column conversion is needed.
+    assignment.column_expr_ = col_item->expr_;
+    assignment.is_implicit_ = true;
+    if (OB_FAIL(ObRawExprUtils::build_null_expr(*params_.expr_factory_, assignment.expr_))) {
+    } else if (OB_FAIL(add_assignment(assigns, table_item, col_item, assignment))) {
+    }
+  }
+  return ret;
+}
+
+int ObDelUpdResolver::invalidate_ai_columns(ObIArray<ObTableAssignment> &assigns,
+                                            const ObStmtScope scope)
+{
+  int ret = OB_SUCCESS;
+  ObSchemaGetterGuard *schema_guard = NULL;
+  const ObTableSchema *table_schema = NULL;
+  const TableItem *table_item = NULL;
+  ObDMLStmt *stmt = get_stmt();
+  if (OB_ISNULL(params_.expr_factory_) || OB_ISNULL(stmt)) {
+    ret = OB_ERR_UNEXPECTED;
+    LOG_WARN("params is invalid", K_(params_.expr_factory), K(stmt));
+  } else if (T_UPDATE_SCOPE != scope) {
+    // only an UPDATE invalidates an AI column: an INSERT leaves the AI column
+    // at its default (NULL) value already.
+  }
+  for (int64_t i = 0; OB_SUCC(ret) && i < assigns.count(); ++i) {
+    ObTableAssignment &table_assign = assigns.at(i);
+    if (OB_ISNULL(schema_checker_)
+        || OB_ISNULL(schema_guard = schema_checker_->get_schema_guard())
+        || OB_ISNULL(table_item = stmt->get_table_item_by_id(table_assign.table_id_))) {
+      ret = OB_ERR_UNEXPECTED;
+      LOG_WARN("invalid schema checker", K(schema_checker_));
+    } else if (OB_FAIL(schema_checker_->get_table_schema(
+                   table_item->get_base_table_item().ref_id_, table_schema))) {
+    } else if (OB_ISNULL(table_schema) || !table_schema->has_ai_column()) {
+      // the table has no AI column at all
+    } else {
+      // the columns which this statement updates
+      ObSEArray<ObString, 8> changed_columns;
+      for (int64_t j = 0; OB_SUCC(ret) && j < table_assign.assignments_.count(); ++j) {
+        const ObAssignment &assign = table_assign.assignments_.at(j);
+        if (OB_ISNULL(assign.column_expr_)) {
+          continue;
+        }
+        if (OB_FAIL(changed_columns.push_back(assign.column_expr_->get_column_name()))) {
+        }
+      }
+      ObSEArray<const ObColumnSchemaV2 *, 4> ai_columns;
+      if (OB_SUCC(ret) && OB_FAIL(ObAiColumnDmlUtil::collect_affected_ai_columns(
+                                 *table_schema, changed_columns, ai_columns))) {
+      } else {
+        for (int64_t j = 0; OB_SUCC(ret) && j < ai_columns.count(); ++j) {
+          if (OB_FAIL(add_ai_column_null_assignment(assigns, table_item, *ai_columns.at(j)))) {
+            SQL_RESV_LOG(WARN, "fail to invalidate the ai column", K(ret),
+                         K(ai_columns.at(j)->get_column_name_str()));
+          }
+        }
+      }
+    }
+  }
+  return ret;
+}
+
 // duplicated assignments are permitted, such SET c2=c1*2, c2=1+c2.
 int ObDelUpdResolver::add_assignment(common::ObIArray<ObTableAssignment> &assigns,
                                      const TableItem *table_item,
-                                     const ColumnItem *col,
-                                     ObAssignment &assign)
+                                     const ColumnItem *col,                                     ObAssignment &assign)
 {
   int ret = OB_SUCCESS;
   ObTableAssignment *table_assign = NULL;
