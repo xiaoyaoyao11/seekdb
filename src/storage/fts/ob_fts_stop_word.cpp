@@ -198,20 +198,21 @@ int ObAddWord::check_stopword(const ObFTWord &ft_word, bool &is_stopword)
 int ObAddWord::groupby_word(const ObFTWord &word, const int64_t word_freq)
 {
   int ret = OB_SUCCESS;
-  int64_t word_count = 0;
   if (OB_UNLIKELY(word.empty() || word_freq <= 0)) {
     ret = OB_INVALID_ARGUMENT;
   } else if (!flag_.groupby_word()) {
     if (OB_FAIL(word_map_.set_refactored(word, 1/*word count*/))) {
     }
-  } else if (OB_FAIL(word_map_.get_refactored(word, word_count)) && OB_HASH_NOT_EXIST != ret) {
   } else {
-    if (OB_HASH_NOT_EXIST == ret) {
-      word_count = 1;
-    } else {
-      word_count += word_freq;
-    }
-    if (OB_FAIL(word_map_.set_refactored(word, word_count, 1/*overwrite*/))) {
+    // 词频聚合是分词热路径，每个 token 都要做一次哈希查找。
+    // 原实现先 get 再 set，一个 token 需要两次哈希计算与两次桶查找；
+    // 这里改为单次查找：命中则原地累加词频，未命中才插入。
+    // 语义与原实现完全一致：首次出现记 1，再次出现累加 word_freq。
+    int64_t *word_count = word_map_.get(word);
+    if (OB_NOT_NULL(word_count)) {
+      *word_count += word_freq;
+    } else if (OB_FAIL(word_map_.set_refactored(word, 1/*first occurrence*/,
+                                              1/*overwrite*/))) {
     }
   }
   return ret;

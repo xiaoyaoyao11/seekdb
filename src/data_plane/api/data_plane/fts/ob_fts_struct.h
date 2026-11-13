@@ -53,6 +53,30 @@ private:
 
 typedef common::hash::ObHashMap<ObFTWord, int64_t> ObFTWordMap;
 
+// 词频哈希表桶数估算
+//
+// 词频哈希表按“不同词”聚类，装载因子（不同词数 / 桶数）过高时，一次查找要沿桶链
+// 逐个比较 key，而 key 的比较走的是带排序规则的字符串比较（逐字符取权重），
+// 是分词与索引构建路径上最贵的操作之一。
+//
+// 不同词数与文本长度大致成正比：英文约 5~6 字节/词（含分隔符），中文约 6 字节/词，
+// 这里按 4 字节/词估算，使装载因子保持在 1 以内；同时设置桶数上限，避免超长文本
+// 占用过多内存。上限 8191 桶在长文档下仍能把装载因子从原来的 20 降到 2.4 以内。
+static constexpr int64_t OB_FT_WORD_BUCKET_NUM_PER_BYTE = 4;
+static constexpr int64_t OB_FT_WORD_MAX_BUCKET_NUM = 8191;
+// 查询文本通常很短，桶数上限取小一些，避免为一次查询申请过多内存
+static constexpr int64_t OB_FT_QUERY_WORD_MAX_BUCKET_NUM = 1024;
+static constexpr int64_t OB_FT_WORD_MIN_BUCKET_NUM = 2;
+
+inline int64_t ob_ft_word_bucket_num(const int64_t text_len, const int64_t max_bucket_num)
+{
+  const int64_t estimate = (text_len > 0) ? (text_len / OB_FT_WORD_BUCKET_NUM_PER_BYTE)
+                                          : OB_FT_WORD_MIN_BUCKET_NUM;
+  const int64_t bucket_num = estimate < OB_FT_WORD_MIN_BUCKET_NUM ? OB_FT_WORD_MIN_BUCKET_NUM
+                                                                  : estimate;
+  return bucket_num < max_bucket_num ? bucket_num : max_bucket_num;
+}
+
 class ObAddWordFlag final
 {
 private:

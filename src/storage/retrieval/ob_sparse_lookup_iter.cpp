@@ -290,12 +290,12 @@ int ObSRHashLookupIter::load_results()
     const ObDatumVector &id_datums = iter_param_->id_proj_expr_->locate_expr_datumvector(*eval_ctx);
     const ObDatumVector &relevance_datums = iter_param_->relevance_proj_expr_->locate_expr_datumvector(*eval_ctx);
     ObDocIdExt id;
-    double relevance = 0.0;
     for (int64_t i = 0; OB_SUCC(ret) && i < sub_count; ++i) {
       if (OB_UNLIKELY(cur_idx >= rangekey_size_)) {
         ret = OB_ERR_UNEXPECTED;
       } else if (OB_FAIL(id.from_datum(*id_datums.at(i)))) {
-      } else if (OB_UNLIKELY(OB_HASH_NOT_EXIST != (ret = hash_map_.get_refactored(id, relevance)))) {
+      } else if (OB_UNLIKELY(OB_NOT_NULL(hash_map_.get(id)))) {
+        // doc id 已存在，与原实现保持一致：视为异常
         ret = COVER_SUCC(OB_ERR_UNEXPECTED);
       } else if (OB_FAIL(hash_map_.set_refactored(id, relevance_datums.at(i)->get_double(), 0))) {
       }

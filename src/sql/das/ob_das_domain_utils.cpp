@@ -35,6 +35,8 @@ namespace oceanbase
 namespace sql
 {
 using storage::ObFTWordMap;
+using storage::ob_ft_word_bucket_num;
+using storage::OB_FT_WORD_MAX_BUCKET_NUM;
 
 
 ObObjDatumMapType ObFTIndexRowCache::FTS_INDEX_TYPES[] = {OBJ_DATUM_STRING, OBJ_DATUM_STRING, OBJ_DATUM_8BYTE_DATA, OBJ_DATUM_8BYTE_DATA};
@@ -94,7 +96,8 @@ int ObFTIndexRowCache::segment(const common::ObObjMeta &ft_obj_meta,
                                                                    doc_id_datum,
                                                                    fulltext,
                                                                    is_fts_index_aux_,
-                                                                   rows_))) {
+                                                                   rows_,
+                                                                   &ft_word_map_))) {
   } else {
     row_idx_ = 0;
   }
@@ -123,6 +126,7 @@ void ObFTIndexRowCache::reset()
   row_idx_ = 0;
   is_fts_index_aux_ = true;
   helper_.reset();
+  ft_word_map_.destroy();
   if (OB_NOT_NULL(merge_memctx_)) {
     DESTROY_CONTEXT(merge_memctx_);
     merge_memctx_ = nullptr;
@@ -274,43 +278,64 @@ int ObDASDomainUtils::build_ft_doc_word_infos(
   return ret;
 }
 
+/*static*/ int ObDASDomainUtils::prepare_ft_word_map(storage::ObFTWordMap &word_map,
+                                                     const int64_t bucket_num)
+{
+  int ret = OB_SUCCESS;
+  if (!word_map.created()) {
+    ret = word_map.create(bucket_num, common::ObMemAttr("FTWordMap"));
+  } else if (word_map.bucket_count() < bucket_num) {
+    // 桶数不足时重建，避免装载因子过高导致哈希冲突增多
+    if (OB_FAIL(word_map.destroy())) {
+    } else {
+      ret = word_map.create(bucket_num, common::ObMemAttr("FTWordMap"));
+    }
+  } else {
+    // 桶数足够：复用已有桶数组，只清空元素，避免逐行申请/释放内存
+    word_map.reuse();
+  }
+  return ret;
+}
+
 /*static*/ int ObDASDomainUtils::generate_fulltext_word_rows(common::ObIAllocator &allocator,
                                                              storage::ObFTParseHelper *helper,
                                                              const common::ObObjMeta &ft_obj_meta,
                                                              const ObDatum &doc_id_datum,
                                                              const ObString &fulltext,
                                                              const bool is_fts_index_aux,
-                                                             ObDomainIndexRow &word_rows)
+                                                             ObDomainIndexRow &word_rows,
+                                                             storage::ObFTWordMap *word_map)
 {
   int ret = OB_SUCCESS;
   static int64_t FT_WORD_DOC_COL_CNT = 4;
-  static constexpr int64_t FT_MAX_WORD_BUCKET = 997;
-  const int64_t ft_word_bkt_cnt = MIN(MAX(fulltext.length() / 10, 2), FT_MAX_WORD_BUCKET);
+  const int64_t ft_word_bkt_cnt = ob_ft_word_bucket_num(fulltext.length(), OB_FT_WORD_MAX_BUCKET_NUM);
   int64_t doc_length = 0;
-  ObFTWordMap ft_word_map;
+  ObFTWordMap tmp_word_map;
+  // 词频哈希表由调用方持有并跨行复用；未提供时退化为局部哈希表
+  storage::ObFTWordMap *ft_word_map = OB_ISNULL(word_map) ? &tmp_word_map : word_map;
   void *rows_buf = nullptr;
   blocksstable::ObDatumRow *rows = nullptr;
   if (OB_ISNULL(helper) || OB_UNLIKELY(!ft_obj_meta.is_valid())) {
     ret = OB_INVALID_ARGUMENT;
   } else if (0 == fulltext.length()) {
     ret = OB_ITER_END;
-  } else if (OB_FAIL(ft_word_map.create(ft_word_bkt_cnt, common::ObMemAttr("FTWordMap")))) {
+  } else if (OB_FAIL(prepare_ft_word_map(*ft_word_map, ft_word_bkt_cnt))) {
   } else if (OB_FAIL(segment_and_calc_word_count(allocator,
                                                  helper,
                                                  ft_obj_meta,
                                                  fulltext,
                                                  doc_length,
-                                                 ft_word_map))) {
-  } else if (0 == ft_word_map.size()) {
+                                                 *ft_word_map))) {
+  } else if (0 == ft_word_map->size()) {
     ret = OB_ITER_END;
   } else if (OB_ISNULL(rows_buf = reinterpret_cast<char *>(
-                           allocator.alloc(ft_word_map.size() * sizeof(blocksstable::ObDatumRow))))) {
+                           allocator.alloc(ft_word_map->size() * sizeof(blocksstable::ObDatumRow))))) {
     ret = OB_ALLOCATE_MEMORY_FAILED;
   } else {
     int64_t i = 0;
-    rows = new (rows_buf) blocksstable::ObDatumRow[ft_word_map.size()];
-    for (ObFTWordMap::const_iterator iter = ft_word_map.begin();
-         OB_SUCC(ret) && iter != ft_word_map.end();
+    rows = new (rows_buf) blocksstable::ObDatumRow[ft_word_map->size()];
+    for (ObFTWordMap::const_iterator iter = ft_word_map->begin();
+         OB_SUCC(ret) && iter != ft_word_map->end();
          ++iter) {
       if (OB_FAIL(rows[i].init(allocator, FT_WORD_DOC_COL_CNT))) {
       } else {
@@ -844,6 +869,7 @@ void ObFTDMLIterator::reset()
   is_inited_ = false;
   data_plane::reset_ft_doc_word_iterator(ft_doc_word_iter_);
   ft_parse_helper_.reset();
+  ft_word_map_.destroy();
   ObDomainDMLIterator::reset();
 }
 
@@ -1033,7 +1059,8 @@ int ObFTDMLIterator::generate_ft_word_rows(const ObChunkDatumStore::StoredRow *s
                                                                    doc_id_datum,
                                                                    ft,
                                                                    is_fts_index_aux,
-                                                                   rows_))) {
+                                                                   rows_,
+                                                                   &ft_word_map_))) {
     if (OB_UNLIKELY(OB_ITER_END != ret)) {
     }
   }

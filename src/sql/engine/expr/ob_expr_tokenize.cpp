@@ -82,7 +82,8 @@ int ObExprTokenize::tokenize_fulltext(const TokenizeParam &param,
 {
   int ret = OB_SUCCESS;
   storage::ObFTParseHelper tokenize_helper;
-  const int64_t ft_word_bkt_cnt = MIN(MAX(param.fulltext_.length() / 2, 2), 997);
+  const int64_t ft_word_bkt_cnt = MIN(MAX(param.fulltext_.length() / 2, 2),
+                                      storage::OB_FT_WORD_MAX_BUCKET_NUM);
   int64_t doc_len = 0;
   storage::ObFTWordMap token_map;
 

@@ -58,6 +58,8 @@ private:
   uint64_t row_idx_;
   bool is_fts_index_aux_;
   storage::ObFTParseHelper helper_;
+  // 跨行复用的词频哈希表，避免逐行申请/释放桶数组
+  storage::ObFTWordMap ft_word_map_;
   bool is_inited_;
 
   DISALLOW_COPY_AND_ASSIGN(ObFTIndexRowCache);
@@ -186,7 +188,8 @@ public:
                                          const ObDatum &doc_id_datum,
                                          const ObString &fulltext,
                                          const bool is_fts_index_aux,
-                                         ObDomainIndexRow &word_rows);
+                                         ObDomainIndexRow &word_rows,
+                                         storage::ObFTWordMap *word_map = nullptr);
   static int generate_multivalue_index_rows(
       ObIAllocator &allocator,
       const ObDASDMLBaseCtDef &das_ctdef,
@@ -197,6 +200,10 @@ public:
       const ObDASWriteBuffer::DmlRow &dml_row,
       ObDomainIndexRow &domain_rows);
 private:
+  // 准备词频哈希表：桶数足够时直接复用已有桶数组，否则按需重建。
+  // 建索引与写入路径逐行调用分词，避免每行重新申请/释放桶数组。
+  static int prepare_ft_word_map(storage::ObFTWordMap &word_map,
+                                 const int64_t bucket_num);
   static int segment_and_calc_word_count(
       common::ObIAllocator &allocator,
       storage::ObFTParseHelper *helper,
@@ -393,6 +400,8 @@ private:
   data_plane::ObFTDocWordIterator *ft_doc_word_iter_;
   common::ObArenaAllocator ft_doc_word_allocator_;
   storage::ObFTParseHelper ft_parse_helper_;
+  // 跨行复用的词频哈希表，避免逐行申请/释放桶数组
+  storage::ObFTWordMap ft_word_map_;
   bool is_inited_;
 };
 

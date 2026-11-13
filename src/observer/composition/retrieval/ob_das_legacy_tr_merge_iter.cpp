@@ -1093,7 +1093,8 @@ int ObDASLegacyTRMergeIter::build_query_tokens(const ObDASIRScanCtDef *ir_ctdef,
       FtsNode *node = fts_parser->root_;
       ObFtsEvalNode *parant_node =nullptr;
       hash::ObHashMap<ObString, int32_t> tokens_map;
-      const int64_t ft_word_bkt_cnt = MAX(search_text_string.length() / 10, 2);
+      const int64_t ft_word_bkt_cnt = storage::ob_ft_word_bucket_num(
+          search_text_string.length(), storage::OB_FT_QUERY_WORD_MAX_BUCKET_NUM);
       if (OB_FAIL(tokens_map.create(ft_word_bkt_cnt, common::ObMemAttr("FTWordMap")))) {
       } else if (OB_FAIL(ObFtsEvalNode::fts_boolean_node_create(parant_node, node, cs_type, alloc, query_tokens, tokens_map, has_duplicate_boolean_tokens))) {
       } else {
@@ -1112,7 +1113,8 @@ int ObDASLegacyTRMergeIter::build_query_tokens(const ObDASIRScanCtDef *ir_ctdef,
     storage::ObFTParseHelper tokenize_helper;
     common::ObSEArray<ObFTWord, 16> tokens;
     hash::ObHashMap<ObFTWord, int64_t> token_map;
-    const int64_t ft_word_bkt_cnt = MAX(search_text_string.length() / 10, 2);
+    const int64_t ft_word_bkt_cnt = storage::ob_ft_word_bucket_num(
+        search_text_string.length(), storage::OB_FT_QUERY_WORD_MAX_BUCKET_NUM);
     if (OB_FAIL(tokenize_helper.init(&alloc, parser_name, parser_properties))) {
     } else if (OB_FAIL(token_map.create(ft_word_bkt_cnt, common::ObMemAttr("FTWordMap")))) {
     } else if (OB_FAIL(tokenize_helper.segment(

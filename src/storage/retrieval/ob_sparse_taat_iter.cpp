@@ -386,7 +386,6 @@ int ObSRTaaTIterImpl::load_next_hash_map()
 
     ObDocIdExt id;
     double cur_relevance = 0.0;
-    double last_relevance = 0.0;
     while (OB_SUCC(ret)) {
       if (OB_FAIL(query::spill_row_store_next_row(
           store_iter, *eval_ctx, exprs))) {
@@ -398,11 +397,13 @@ int ObSRTaaTIterImpl::load_next_hash_map()
         } else if (iter_param_->need_project_relevance()) {
           ObDatum &relevance_datum = iter_param_->relevance_expr_->locate_expr_datum(*eval_ctx);
           cur_relevance = relevance_datum.get_double();
-          if (OB_FAIL(map->get_refactored(id, last_relevance))) {
-            if (OB_HASH_NOT_EXIST != ret) {
-            } else if (OB_FAIL(map->set_refactored(id, cur_relevance, 1 /* overwrite */))) {
-            }
-          } else if (OB_FAIL(map->set_refactored(id, cur_relevance + last_relevance, 1 /* overwrite */))) {
+          // 相关度累加是 TAAT 归并的热路径，每行都要处理。
+          // 原实现先 get 再 set，每行需要两次哈希计算与两次桶查找；
+          // 这里改为单次查找：命中则原地累加，未命中才插入。
+          double *relevance_ptr = map->get(id);
+          if (OB_NOT_NULL(relevance_ptr)) {
+            *relevance_ptr += cur_relevance;
+          } else if (OB_FAIL(map->set_refactored(id, cur_relevance, 1 /* overwrite */))) {
           }
         } else {
           if (OB_FAIL(map->set_refactored(id, 1.0, 0 /* overwrite */))) {
