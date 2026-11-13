@@ -373,7 +373,7 @@ END_P SET_VAR DELIMITER
 //-----------------------------non_reserved keyword end---------------------------------------------
 %type <node> sql_stmt stmt_list stmt opt_end_p
 %type <node> select_stmt update_stmt delete_stmt
-%type <node> file_table_expr opt_file_table_arg_list file_table_arg_list file_table_arg
+%type <node> file_table_expr
 %type <node> insert_stmt single_table_insert values_clause dml_table_name
 %type <node> create_table_stmt create_table_like_stmt fork_table_stmt fork_database_stmt diff_table_stmt merge_table_stmt opt_table_option_list table_option_list table_option table_option_list_space_seperated parallel_option lob_storage_clause lob_storage_parameter lob_storage_parameters lob_chunk_size
 %type <node> index_or_heap
@@ -17531,46 +17531,9 @@ literal
 *
 *============================================================*/
 file_table_expr:
-NAME_OB '(' STRING_VALUE opt_file_table_arg_list ')'
+NAME_OB '(' STRING_VALUE ')'
 {
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $1, $3, $4, NULL);
-}
-;
-
-opt_file_table_arg_list:
-/*Empty*/
-{
-  $$ = NULL;
-}
-| ',' file_table_arg_list
-{
-  $$ = $2;
-}
-;
-
-file_table_arg_list:
-file_table_arg
-{
-  $$ = $1;
-}
-| file_table_arg_list ',' file_table_arg
-{
-  malloc_non_terminal_node($$, result->malloc_pool_, T_LINK_NODE, 2, $1, $3);
-}
-;
-
-file_table_arg:
-relation_name opt_equal_mark conf_const
-{
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_OPTION, 2, $1, $3);
-}
-| relation_name opt_equal_mark relation_name
-{
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_OPTION, 2, $1, $3);
-}
-| relation_name
-{
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_OPTION, 2, $1, NULL);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $1, $3, NULL, NULL);
 }
 ;
 
