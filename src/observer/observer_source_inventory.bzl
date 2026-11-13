@@ -356,6 +356,7 @@ OBSERVER_UNITY_GROUPS = [
             "src/observer/virtual_table/ob_all_virtual_resource_limit.cpp",
             "src/observer/virtual_table/ob_all_virtual_scheduler_running_job.cpp",
             "src/observer/virtual_table/ob_all_virtual_vector_mem_info.cpp",
+            "src/observer/virtual_table/ob_all_virtual_ai_column.cpp",
             "src/observer/virtual_table/ob_show_table_status.cpp",
             "src/observer/virtual_table/ob_virtual_charset.cpp",
             "src/observer/virtual_table/ob_virtual_outline.cpp",

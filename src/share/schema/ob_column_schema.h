@@ -246,9 +246,15 @@ int assign(const ObColumnSchemaV2 &src_schema);
   inline void unset_ai_column() { del_column_flag(AI_COLUMN_FLAG); }
   inline const common::ObString &get_ai_column_expr() const { return ai_column_expr_; }
   int set_ai_column_expr(const common::ObString &expr);
+  // The normalized expression is the AI expression with the type specific
+  // system instruction prepended, so that the model is asked for a value of
+  // the target column type.
+  inline const common::ObString &get_ai_normalized_expr() const { return ai_normalized_expr_; }
+  int set_ai_normalized_expr(const common::ObString &expr);
   // Persist the AI column descriptor into extended_type_info_ (which is stored in
   // __all_column) and refresh the in-memory fields from it after a schema load.
   int set_ai_column_meta(const common::ObString &expr,
+                         const common::ObString &normalized_expr,
                          const int8_t sync_mode,
                          const int8_t max_retries);
   int refresh_ai_column_meta();
@@ -398,6 +404,8 @@ private:
   common::ObString comment_;
   // AI column metadata: the AI expression and the async options.
   common::ObString ai_column_expr_;
+  // The AI expression with the type specific system instruction prepended.
+  common::ObString ai_normalized_expr_;
   int8_t ai_sync_mode_;
   int8_t ai_max_retries_;
   common::ObArrayHelper<common::ObString> extended_type_info_;//used for enum and set

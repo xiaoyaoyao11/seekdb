@@ -162,6 +162,7 @@
 #include "observer/virtual_table/ob_all_virtual_dml_stats.h"
 #include "observer/virtual_table/ob_all_virtual_change_stream_refresh_stat.h"
 #include "observer/virtual_table/ob_all_virtual_vector_mem_info.h"
+#include "observer/virtual_table/ob_all_virtual_ai_column.h"
 
 namespace oceanbase
 {
@@ -1717,6 +1718,15 @@ int ObVTIterCreator::create_vt_iter(ObVTableScanParam &params,
             if (OB_FAIL(NEW_VIRTUAL_TABLE(ObAllVirtualVectorMemInfo, vector_mem_info))) {
             } else {
               vt_iter = static_cast<ObVirtualTableIterator *>(vector_mem_info);
+            }
+            break;
+          }
+          case OB_ALL_AI_COLUMN_TID:
+          {
+            ObAllVirtualAiColumn *ai_column = NULL;
+            if (OB_FAIL(NEW_VIRTUAL_TABLE(ObAllVirtualAiColumn, ai_column))) {
+            } else {
+              vt_iter = static_cast<ObVirtualTableIterator *>(ai_column);
             }
             break;
           }
