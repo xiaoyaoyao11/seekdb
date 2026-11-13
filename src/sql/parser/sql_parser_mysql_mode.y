@@ -373,7 +373,7 @@ END_P SET_VAR DELIMITER
 //-----------------------------non_reserved keyword end---------------------------------------------
 %type <node> sql_stmt stmt_list stmt opt_end_p
 %type <node> select_stmt update_stmt delete_stmt
-%type <node> copy_to_file_stmt opt_copy_file_option_list copy_file_option_list copy_file_option
+%type <node> copy_to_file_stmt opt_copy_file_option_list copy_file_option_list copy_file_option copy_file_option_value
 %type <node> file_table_expr opt_file_table_arg_list file_table_arg_list file_table_arg
 %type <node> insert_stmt single_table_insert values_clause dml_table_name
 %type <node> create_table_stmt create_table_like_stmt fork_table_stmt fork_database_stmt diff_table_stmt merge_table_stmt opt_table_option_list table_option_list table_option table_option_list_space_seperated parallel_option lob_storage_clause lob_storage_parameter lob_storage_parameters lob_chunk_size
@@ -17623,21 +17623,53 @@ copy_file_option
 ;
 
 copy_file_option:
-relation_name
+NAME_OB copy_file_option_value
 {
-  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_TO_FILE_OPTION, 2, $1, NULL);
+  ParseNode *name_node = $1;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_TO_FILE_OPTION, 2, name_node, $2);
 }
-| relation_name conf_const
+| NAME_OB
 {
-  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_TO_FILE_OPTION, 2, $1, $2);
+  ParseNode *name_node = $1;
+  ParseNode *value_node = NULL;
+  malloc_terminal_node(value_node, result->malloc_pool_, T_BOOL);
+  value_node->value_ = 1;
+  value_node->is_hidden_const_ = 1;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_TO_FILE_OPTION, 2, name_node, value_node);
 }
-| relation_name COMP_EQ conf_const
+| ESCAPE copy_file_option_value
 {
-  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_TO_FILE_OPTION, 2, $1, $3);
+  ParseNode *name_node = NULL;
+  make_name_node(name_node, result->malloc_pool_, "escape");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_TO_FILE_OPTION, 2, name_node, $2);
 }
-| relation_name COMP_EQ relation_name
+| FORMAT copy_file_option_value
 {
-  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_TO_FILE_OPTION, 2, $1, $3);
+  ParseNode *name_node = NULL;
+  make_name_node(name_node, result->malloc_pool_, "format");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_TO_FILE_OPTION, 2, name_node, $2);
+}
+| FORMAT NAME_OB
+{
+  ParseNode *name_node = NULL;
+  make_name_node(name_node, result->malloc_pool_, "format");
+  ParseNode *value_node = $2;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_TO_FILE_OPTION, 2, name_node, value_node);
+}
+;
+
+copy_file_option_value:
+STRING_VALUE
+{
+  $$ = $1;
+}
+| BOOL_VALUE
+{
+  $$ = $1;
+}
+| INTNUM
+{
+  $$ = $1;
 }
 ;
 
