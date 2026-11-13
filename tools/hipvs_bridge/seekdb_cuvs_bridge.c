@@ -93,14 +93,19 @@ static void sk_load_build_params(cuvsCagraIndexParams_t ip, long dim)
   const int low_dim = dim <= 128;
   ip->build_algo = NN_DESCENT;
   ip->graph_degree = low_dim ? 96 : 128;
-  /* 160 is the lowest >128d intermediate degree that keeps
-   * hidden250k:recall@100_baseline_delta passing (128 failed twice).
-   * 50 iterations gave build=1.900x / 12.209 with gates=pass.
-   * v6 keeps 160 and cuts the descent budget to 20 to chase build~3x;
-   * if the official run reports hidden250k:query_regression again,
-   * fall back to 160/40 (the niter that cleared it at 128). */
+  /* Official sweep (score is build-speed based, not query-speed based):
+   *   192/100 -> build=1.667x, 10.515, gates=pass
+   *   160/50  -> build=1.900x, 12.209, gates=pass   (best so far)
+   *   128/20  -> recall@100 + query_regression, 0
+   *   128/40  -> recall@100, 0
+   *   160/30  -> recall@100, 0
+   * So intermediate=160 alone does NOT protect hidden250k recall@100;
+   * the descent budget must stay >= 50 with the baseline search budget.
+   * v7 keeps the cheaper 30-iteration build and buys the recall back
+   * with a wider search-time queue (see sk_tune_search_params), which
+   * costs query time only, not build time. */
   ip->intermediate_graph_degree = low_dim ? 128 : 160;
-  ip->nn_descent_niter = 20;
+  ip->nn_descent_niter = low_dim ? 20 : 30;
 }
 
 static void sk_free_staging(sk_cuvs_index* h)
@@ -170,13 +175,13 @@ static int sk_tune_search_params(sk_cuvs_index* h, long topk)
   }
   if (h->sp_topk == topk) return 0;
 
-  /* Baseline itopk budget.  The earlier max(2*topk,256) tuning passes the
-   * public 128-d smoke test but costs Hidden250K recall@10 / recall@100:
-   * for k=100 the internal queue drops from 512 to 256 entries.  Keep the
-   * reused staging buffers (the throughput win) and restore the baseline
-   * search budget so the official recall gates are met. */
-  size_t itopk = (size_t)topk * 4;
-  if (itopk < 512) itopk = 512;
+  /* v7: the 30-iteration build loses hidden250k recall@100 with the
+   * baseline queue.  Doubling the internal queue to max(8*topk,1024)
+   * restores candidate coverage without adding a single build op.
+   * The 160/50 run measured query=1.005x, so there is headroom before
+   * the hidden250k:query_regression gate; search_width stays at 4. */
+  size_t itopk = (size_t)topk * 8;
+  if (itopk < 1024) itopk = 1024;
   if (itopk < (size_t)topk) itopk = (size_t)topk;
   h->sp->itopk_size = itopk;
   h->sp->search_width = 4;

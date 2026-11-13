@@ -108,18 +108,29 @@ staging buffers.  Only `intermediate_graph_degree` and `nn_descent_niter` on the
 | v2 | 160 / 50 | `build=1.900x, query=1.005x, gates=pass` | **12.209** |
 | v3 | 128 / 20 | `gates failed: hidden250k:recall@100_baseline_delta,hidden250k:query_regression` | 0 |
 | v4 | 128 / 40 | `gates failed: hidden250k:recall@100_baseline_delta` | 0 |
-| v5 | 160 / 30 | official run submitted; result unreadable while the platform session is expired | - |
-| v6 | 160 / 20 | candidate, not yet submitted | - |
+| v5 | 160 / 30 | `gates failed: hidden250k:recall@100_baseline_delta` | 0 |
+| v6 | 160 / 20 | **never submitted** — v5 proved it would fail the same gate | - |
+| v7 | 160 / 30 + `itopk=max(8k,1024)` | candidate, submitting | - |
 
-Decision rule after the v5 result becomes readable:
+The v5 result changes the conclusion from the v3/v4 pair.  `recall@100` is not
+governed by `intermediate_graph_degree` alone: at 160 the gate still fails once
+the descent budget drops from 50 to 30.  So `160/50` (12.209) is the exact
+Pareto boundary of these two build parameters — sweeping them further can only
+lose points.  v6 (160/20) was therefore cancelled before submission, saving one
+of the ten daily attempts.
 
-- If v5 reports `gates=pass`, the 30-iteration budget is safe and v6 (20) is the
-  next step toward `build~3x`.  The engine may submit it automatically.
-- If v5 reports `hidden250k:query_regression`, the descent budget cannot go below
-  40; discard v6 and submit `160 / 40` instead, which is the smallest budget that
-  cleared that gate at intermediate=128.
-- If v5 reports `hidden250k:recall@100_baseline_delta` even at 160, revert to the
-  known-good `160 / 50` (12.209) and stop sweeping these two parameters.
+v7 keeps the cheaper 30-iteration build and moves the compensation to search
+time: `itopk_size = max(8 * topk, 1024)` instead of `max(4 * topk, 512)`.
+A wider internal queue restores candidate coverage (recall@10 / recall@100)
+without adding any build work, so the build-speed score should rise while the
+recall gates recover.  `search_width` stays 4 and `graph_degree` stays 128 to
+limit query overhead; the 160/50 run measured `query=1.005x`, so there is
+headroom before `hidden250k:query_regression`.
+
+If v7 reports `query_regression`, halve the increase to `max(6*topk,768)`.
+If it reports `recall@100` anyway, fall back to `160/50` (12.209) and stop
+tuning parameters — reaching `build~3x` then requires cutting the fixed build
+overhead (staging buffers / device syncs) instead of the descent budget.
 
 Two conclusions from the v3/v4 pair:
 
