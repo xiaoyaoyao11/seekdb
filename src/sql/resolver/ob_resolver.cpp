@@ -98,7 +98,6 @@
 #include "sql/pl/ob_pl_package.h"
 #include "sql/parser/ob_parser.h"
 #include "sql/resolver/dml/ob_select_stmt.h"
-#include "sql/engine/basic/ob_file_table_reader.h"
 #include "lib/string/ob_sql_string.h"
 
 namespace oceanbase

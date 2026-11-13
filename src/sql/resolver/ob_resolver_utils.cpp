@@ -23,7 +23,6 @@
 #include "sql/engine/cmd/ob_load_data_parser.h"
 #include "sql/resolver/cmd/ob_load_data_stmt.h"
 #include "sql/resolver/ob_resolver_utils.h"
-#include "sql/engine/basic/ob_file_table_reader.h"
 #include "sql/code_generator/ob_column_index_provider.h"
 #include "query/resolver/ob_partition_type_policy.h"
 #include "sql/resolver/cmd/ob_load_data_stmt.h"
