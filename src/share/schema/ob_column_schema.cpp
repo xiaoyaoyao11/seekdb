@@ -77,11 +77,14 @@ int ObColumnSchemaV2::assign(const ObColumnSchemaV2 &src_schema)
     sub_type_ = src_schema.sub_type_;
     skip_index_attr_ = src_schema.skip_index_attr_;
     lob_chunk_size_ = src_schema.lob_chunk_size_;
+    ai_sync_mode_ = src_schema.ai_sync_mode_;
+    ai_max_retries_ = src_schema.ai_max_retries_;
 
     if (OB_FAIL(deep_copy_obj(src_schema.orig_default_value_, orig_default_value_))) {
     } else if (OB_FAIL(deep_copy_obj(src_schema.cur_default_value_, cur_default_value_))) {
     } else if (OB_FAIL(deep_copy_str(src_schema.column_name_, column_name_))) {
     } else if (OB_FAIL(deep_copy_str(src_schema.comment_, comment_))) {
+    } else if (OB_FAIL(deep_copy_str(src_schema.ai_column_expr_, ai_column_expr_))) {
     } else if (OB_FAIL(set_extended_type_info(src_schema.extended_type_info_))) {
     } else if (src_schema.column_ref_idxs_ != NULL) {
       if (OB_FAIL(alloc_column_ref_set())) {
@@ -123,6 +126,7 @@ int64_t ObColumnSchemaV2::get_convert_size() const
   if (column_ref_idxs_ != NULL) {
     convert_size += sizeof(ColumnReferenceSet);
   }
+  convert_size += ai_column_expr_.length() + 1;
   convert_size += extended_type_info_.count() * static_cast<int64_t>(sizeof(ObString));
   for (int64_t i = 0; i < extended_type_info_.count(); ++i) {
     convert_size += extended_type_info_.at(i).length() + 1;
@@ -187,8 +191,80 @@ void ObColumnSchemaV2::reset()
   reset_string_array(extended_type_info_);
   skip_index_attr_.reset();
   lob_chunk_size_ = OB_DEFAULT_LOB_CHUNK_SIZE;
+  ai_column_expr_.reset();
+  ai_sync_mode_ = 0;
+  ai_max_retries_ = 0;
   local_session_vars_.reset();
   ObSchema::reset();
+}
+
+int ObColumnSchemaV2::set_ai_column_expr(const common::ObString &expr)
+{
+  return deep_copy_str(expr, ai_column_expr_);
+}
+
+int ObColumnSchemaV2::set_ai_column_meta(const common::ObString &expr,
+                                         const int8_t sync_mode,
+                                         const int8_t max_retries)
+{
+  int ret = OB_SUCCESS;
+  const char *prefix = "ob_ai:";
+  const int64_t prefix_len = static_cast<int64_t>(strlen(prefix));
+  char head[64];
+  int head_len = 0;
+  char *buf = NULL;
+  if (OB_FAIL(deep_copy_str(expr, ai_column_expr_))) {
+  } else {
+    head_len = snprintf(head, sizeof(head), "ob_ai:s=%d;r=%d;e=",
+                        static_cast<int>(sync_mode), static_cast<int>(max_retries));
+    if (head_len <= 0 || head_len >= static_cast<int>(sizeof(head))) {
+      ret = OB_ERR_UNEXPECTED;
+    } else if (OB_ISNULL(buf = static_cast<char *>(
+                   get_allocator()->alloc(static_cast<int64_t>(head_len) + expr.length())))) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+      LOG_WARN("failed to allocate ai column descriptor", K(ret), K(expr.length()));
+    } else {
+      MEMCPY(buf, head, head_len);
+      if (expr.length() > 0) {
+        MEMCPY(buf + head_len, expr.ptr(), expr.length());
+      }
+      if (OB_FAIL(add_type_info(ObString(static_cast<int64_t>(head_len) + expr.length(), buf)))) {
+      } else {
+        ai_sync_mode_ = sync_mode;
+        ai_max_retries_ = max_retries;
+      }
+    }
+  }
+  UNUSED(prefix);
+  UNUSED(prefix_len);
+  return ret;
+}
+
+int ObColumnSchemaV2::refresh_ai_column_meta()
+{
+  int ret = OB_SUCCESS;
+  const char *prefix = "ob_ai:";
+  const int64_t prefix_len = static_cast<int64_t>(strlen(prefix));
+  for (int64_t i = 0; OB_SUCC(ret) && i < extended_type_info_.count(); ++i) {
+    const ObString &info = extended_type_info_.at(i);
+    if (info.length() > prefix_len && 0 == strncmp(info.ptr(), prefix, prefix_len)) {
+      int sync_mode = 0;
+      int max_retries = 0;
+      const char *sep = NULL;
+      if (2 == sscanf(info.ptr(), "ob_ai:s=%d;r=%d;e=", &sync_mode, &max_retries)
+          && NULL != (sep = strstr(info.ptr(), ";e="))) {
+        sep += 3;  // skip ";e="
+        ObString expr(static_cast<int32_t>(info.length() - (sep - info.ptr())),
+                      const_cast<char *>(sep));
+        if (OB_FAIL(deep_copy_str(expr, ai_column_expr_))) {
+        } else {
+          ai_sync_mode_ = static_cast<int8_t>(sync_mode);
+          ai_max_retries_ = static_cast<int8_t>(max_retries);
+        }
+      }
+    }
+  }
+  return ret;
 }
 
 OB_DEF_SERIALIZE(ObColumnSchemaV2)
@@ -235,6 +311,9 @@ OB_DEF_SERIALIZE(ObColumnSchemaV2)
                 sub_type_,
                 skip_index_attr_,
                 lob_chunk_size_,
+                ai_column_expr_,
+                ai_sync_mode_,
+                ai_max_retries_,
                 local_session_vars_);
   }
 
@@ -248,6 +327,7 @@ OB_DEF_DESERIALIZE(ObColumnSchemaV2)
   ObObj cur_default_value;
   ObString column_name;
   ObString comment;
+  ObString ai_column_expr;
   bool has_column_ref = false;
 
   LST_DO_CODE(OB_UNIS_DECODE,
@@ -288,6 +368,7 @@ OB_DEF_DESERIALIZE(ObColumnSchemaV2)
   } else if (OB_FAIL(deep_copy_obj(cur_default_value, cur_default_value_))) {
   } else if (OB_FAIL(deep_copy_str(column_name, column_name_))) {
   } else if (OB_FAIL(deep_copy_str(comment, comment_))) {
+  } else if (OB_FAIL(deep_copy_str(ai_column_expr, ai_column_expr_))) {
   } else {
     LST_DO_CODE(OB_UNIS_DECODE,
                 srs_id_,
@@ -295,7 +376,12 @@ OB_DEF_DESERIALIZE(ObColumnSchemaV2)
                 sub_type_,
                 skip_index_attr_,
                 lob_chunk_size_,
+                ai_column_expr,
+                ai_sync_mode_,
+                ai_max_retries_,
                 local_session_vars_);
+  }
+  if (OB_SUCC(ret) && OB_FAIL(refresh_ai_column_meta())) {
   }
   return ret;
 }
@@ -340,6 +426,9 @@ OB_DEF_SERIALIZE_SIZE(ObColumnSchemaV2)
               sub_type_,
               skip_index_attr_,
               lob_chunk_size_,
+              ai_column_expr_,
+              ai_sync_mode_,
+              ai_max_retries_,
               local_session_vars_);
   return len;
 }
@@ -585,6 +674,7 @@ int ObColumnSchemaV2::deserialize_extended_type_info(const char *buf,
 {
   int ret = OB_SUCCESS;
   if (OB_FAIL(deserialize_string_array(buf, data_len, pos, extended_type_info_, get_allocator()))) {
+  } else if (OB_FAIL(refresh_ai_column_meta())) {
   }
   return ret;
 }

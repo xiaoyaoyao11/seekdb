@@ -240,6 +240,22 @@ int assign(const ObColumnSchemaV2 &src_schema);
   inline bool is_cte_generated_column() const { return column_flags_ & CTE_GENERATED_COLUMN_FLAG; }
   inline bool is_default_expr_v2_column() const { return column_flags_ & DEFAULT_EXPR_V2_COLUMN_FLAG; }
   inline bool is_generated_column() const { return (is_virtual_generated_column() || is_stored_generated_column()); }
+  // ---- AI column (asynchronous model-derived column) ----
+  inline bool is_ai_column() const { return 0 != (column_flags_ & AI_COLUMN_FLAG); }
+  inline void set_ai_column() { add_column_flag(AI_COLUMN_FLAG); }
+  inline void unset_ai_column() { del_column_flag(AI_COLUMN_FLAG); }
+  inline const common::ObString &get_ai_column_expr() const { return ai_column_expr_; }
+  int set_ai_column_expr(const common::ObString &expr);
+  // Persist the AI column descriptor into extended_type_info_ (which is stored in
+  // __all_column) and refresh the in-memory fields from it after a schema load.
+  int set_ai_column_meta(const common::ObString &expr,
+                         const int8_t sync_mode,
+                         const int8_t max_retries);
+  int refresh_ai_column_meta();
+  inline int8_t get_ai_sync_mode() const { return ai_sync_mode_; }
+  inline void set_ai_sync_mode(const int8_t mode) { ai_sync_mode_ = mode; }
+  inline int8_t get_ai_max_retries() const { return ai_max_retries_; }
+  inline void set_ai_max_retries(const int8_t retries) { ai_max_retries_ = retries; }
   inline bool is_generated_column_using_udf() const { return /*is_generated_column() && global index table clean the virtual gen col flag*/ !!(column_flags_ & GENERATED_COLUMN_UDF_EXPR); }
   // to check whether storing column in index table is specified by user.
   inline bool is_user_specified_storing_column() const { return column_flags_ & USER_SPECIFIED_STORING_COLUMN_FLAG; }
@@ -380,6 +396,10 @@ private:
   common::ObObj cur_default_value_; //collation must be same with the column
   common::ObString column_name_;
   common::ObString comment_;
+  // AI column metadata: the AI expression and the async options.
+  common::ObString ai_column_expr_;
+  int8_t ai_sync_mode_;
+  int8_t ai_max_retries_;
   common::ObArrayHelper<common::ObString> extended_type_info_;//used for enum and set
   uint64_t prev_column_id_;
   uint64_t next_column_id_;
