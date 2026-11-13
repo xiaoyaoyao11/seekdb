@@ -20,6 +20,7 @@
 #include "lib/ob_define.h"
 #include "lib/string/ob_string.h"
 #include "lib/container/ob_se_array.h"
+#include <utility>
 
 namespace oceanbase
 {
@@ -27,6 +28,7 @@ namespace sql
 {
 
 class ObDMLStmt;
+class ObSelectStmt;
 
 /**
  * @file ob_ai_column_strict_read.h
@@ -55,6 +57,23 @@ public:
    *         when one of the referenced AI columns has unfinished tasks
    */
   static int check(ObDMLStmt &stmt, const bool is_strict);
+
+  /**
+   * Collect the AI columns which a statement references.
+   *
+   * @param stmt       the resolved statement
+   * @param ai_columns the collected (table_id, column_id) pairs
+   */
+  static int collect_ai_columns_of_stmt(
+      ObDMLStmt &stmt,
+      common::ObIArray<std::pair<uint64_t, uint64_t> > &ai_columns);
+
+  /**
+   * Collect the AI columns which a select statement references.
+   */
+  static int collect_from_select(
+      const ObSelectStmt &stmt,
+      common::ObIArray<std::pair<uint64_t, uint64_t> > &ai_columns);
 };
 
 } // end namespace sql

@@ -132,6 +132,7 @@ SQL_PUBLIC_HEADER_ROOTS = [
     "resolver/ddl/ob_trigger_source_builder.h",
     "resolver/ddl/ob_vec_index_builder_util.h",
     "resolver/dml/ob_ai_column_dml_util.h",
+    "resolver/dml/ob_ai_column_strict_read.h",
     "resolver/dml/ob_delete_resolver.h",
     "resolver/dml/ob_dml_resolver.h",
     "resolver/dml/ob_dml_stmt.h",

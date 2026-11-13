@@ -96,6 +96,7 @@
 #include "sql/pl/ob_pl_package.h"
 #include "sql/parser/ob_parser.h"
 #include "sql/resolver/dml/ob_select_stmt.h"
+#include "sql/resolver/dml/ob_ai_column_strict_read.h"
 #include "sql/engine/basic/ob_file_table_reader.h"
 #include "lib/string/ob_sql_string.h"
 
@@ -656,6 +657,21 @@ int ObResolver::resolve(IsPrepared if_prepared, const ParseNode &parse_tree, ObS
       ObDMLStmt *dml_stmt = static_cast<ObDMLStmt*>(stmt);
       ObRawExprWrapEnumSet enum_set_wrapper(*params_.expr_factory_, params_.session_info_);
       if (OB_FAIL(enum_set_wrapper.wrap_enum_set(*dml_stmt))) {
+      }
+    }
+
+    if (OB_SUCC(ret) && stmt->is_dml_stmt() && !stmt->is_explain_stmt()) {
+      // When the strict read is on, a statement which reads an AI column which
+      // still has unfinished tasks fails immediately.
+      bool is_strict_read = false;
+      if (OB_FAIL(params_.session_info_->get_sys_variable(share::SYS_VAR_AI_COLUMN_STRICT_READ,
+                                                         is_strict_read))) {
+        params_.session_info_->get_sys_variable(share::SYS_VAR_AI_COLUMN_STRICT_READ,
+                                                is_strict_read);
+      }
+      if (is_strict_read) {
+        if (OB_FAIL(ObAiColumnStrictRead::check(*static_cast<ObDMLStmt *>(stmt), is_strict_read))) {
+        }
       }
     }
 
