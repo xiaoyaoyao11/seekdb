@@ -135,7 +135,7 @@ int ObDelUpdResolver::resolve_assignments(const ParseNode &parse_node,
             ObDefaultValueUtils utils(stmt, &params_, this);
             if (OB_FAIL(utils.resolve_default_expr(*column, expr, scope))) {
             }
-          } else if (is_generated_column) {
+          } else if (is_generated_column || ref_expr->is_ai_column()) {
             ret = OB_NON_DEFAULT_VALUE_FOR_GENERATED_COLUMN;
             const ObString &column_name = ref_expr->get_column_name();
             const ObString &table_name = ref_expr->get_table_name();
@@ -2342,7 +2342,7 @@ int ObDelUpdResolver::resolve_insert_values(const ParseNode *node,
               }
             } else if (OB_FAIL(check_basic_column_generated(column_expr, del_upd_stmt,
                                                             is_generated_column))) {
-            } else if (is_generated_column) {
+            } else if (is_generated_column || column_expr->is_ai_column()) {
               ret = OB_NON_DEFAULT_VALUE_FOR_GENERATED_COLUMN;
               ColumnItem *orig_col_item = NULL;
               if (NULL != (orig_col_item = del_upd_stmt->get_column_item_by_id(table_info.table_id_, column_id))
