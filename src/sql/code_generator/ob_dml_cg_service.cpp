@@ -2041,6 +2041,10 @@ int ObDmlCgService::fill_table_dml_param(share::schema::ObSchemaGetterGuard *gua
   } else if (table_schema->is_multivalue_index_aux() &&
             OB_FAIL(fill_multivalue_extra_info_on_table_param(guard, table_schema, das_dml_ctdef))) {
   } else if (table_schema->is_user_table() && !table_schema->is_index_table()) {
+    // AI columns are maintained asynchronously by the change stream as well.
+    if (table_schema->has_ai_column()) {
+      das_dml_ctdef.table_param_.set_has_async_index(true);
+    }
     const common::ObIArray<ObAuxTableMetaInfo> &index_infos = table_schema->get_simple_index_infos();
     for (int64_t i = 0; OB_SUCC(ret) && i < index_infos.count(); ++i) {
       const ObTableSchema *index_schema = nullptr;

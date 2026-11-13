@@ -18,6 +18,7 @@
 
 #include "observer/change_stream/ob_change_stream_plugin.h"
 #include "observer/change_stream/ob_cs_plugin_async_index.h"
+#include "observer/change_stream/ob_cs_plugin_ai_column.h"
 #include "lib/oblog/ob_log_module.h"
 
 namespace oceanbase
@@ -28,8 +29,13 @@ namespace share
 // Auto-register plugins at startup.
 static int register_plugins_()
 {
-  return ObCSPluginRegistry::get_instance().register_factory(
+  int ret = ObCSPluginRegistry::get_instance().register_factory(
       CS_PLUGIN_ASYNC_INDEX, &create_async_index_plugin);
+  if (common::OB_SUCCESS == ret) {
+    ret = ObCSPluginRegistry::get_instance().register_factory(
+        CS_PLUGIN_AI_COLUMN, &create_ai_column_plugin);
+  }
+  return ret;
 }
 static int plugin_reg_ret_ __attribute__((unused)) = register_plugins_();
 

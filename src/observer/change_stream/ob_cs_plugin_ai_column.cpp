@@ -1,0 +1,269 @@
+/*
+ * Copyright (c) 2025 OceanBase.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#define USING_LOG_PREFIX SHARE
+
+#include "observer/change_stream/ob_cs_plugin_ai_column.h"
+#include "lib/oblog/ob_log_module.h"
+#include "lib/string/ob_sql_string.h"
+#include "share/ob_server_struct.h"
+#include "share/rc/ob_server_runtime.h"
+#include "share/schema/ob_schema_runtime_service.h"
+#include "share/schema/ob_multi_version_schema_service.h"
+#include "share/schema/ob_table_schema.h"
+#include "share/schema/ob_column_schema.h"
+#include "share/schema/ob_schema_struct.h"
+#include "share/tablet/ob_tablet_mapping_operator.h"
+#include "storage/blocksstable/ob_datum_row.h"
+#include "common/mysqlclient/ob_mysql_transaction.h"
+
+namespace oceanbase
+{
+using namespace common;
+namespace share
+{
+
+ObCSAiColumnProcessor::ObCSAiColumnProcessor(ObCSExecCtx &ctx)
+  : ctx_(ctx)
+{
+}
+
+ObCSAiColumnProcessor::~ObCSAiColumnProcessor()
+{
+}
+
+int ObCSAiColumnProcessor::init_schema_guard_()
+{
+  int ret = common::OB_SUCCESS;
+  ObMultiVersionSchemaService *schema_service =
+      nullptr != ::oceanbase::share::server_service<::oceanbase::share::schema::ObSchemaRuntimeService>()
+          ? ::oceanbase::share::server_service<::oceanbase::share::schema::ObSchemaRuntimeService>()->get_schema_service()
+          : nullptr;
+  if (OB_ISNULL(schema_service)) {
+    ret = common::OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(schema_service->get_runtime_schema_guard(
+      schema_guard_, ctx_.schema_version_,
+      ObMultiVersionSchemaService::RefreshSchemaMode::FORCE_FALLBACK))) {
+  }
+  return ret;
+}
+
+int ObCSAiColumnProcessor::resolve_table_id_from_tablet_id_(
+    const common::ObTabletID &tablet_id,
+    uint64_t &table_id)
+{
+  int ret = common::OB_SUCCESS;
+  table_id = common::OB_INVALID_ID;
+  if (OB_UNLIKELY(!tablet_id.is_valid())) {
+    ret = common::OB_INVALID_ARGUMENT;
+  } else if (tablet_id.is_inner_tablet()) {
+    table_id = tablet_id.id();
+  } else if (OB_SUCC(tablet_to_table_.get_refactored(tablet_id.id(), table_id))) {
+    if (common::OB_INVALID_ID == table_id) {
+      ret = common::OB_TABLET_NOT_EXIST;
+    }
+  } else if (OB_HASH_NOT_EXIST != ret) {
+  } else if (OB_ISNULL(GCTX.sql_proxy_)) {
+    ret = common::OB_ERR_UNEXPECTED;
+  } else {
+    common::ObSEArray<common::ObTabletID, 1> tablet_ids;
+    common::ObSEArray<ObTabletTablePair, 1> infos;
+    if (OB_FAIL(tablet_ids.push_back(tablet_id))) {
+    } else if (OB_FAIL(ObTabletMappingTableOperator::batch_get(
+                   *GCTX.sql_proxy_, tablet_ids, infos))) {
+      if (common::OB_ITEM_NOT_MATCH == ret) {
+        ret = common::OB_TABLET_NOT_EXIST;
+        table_id = common::OB_INVALID_ID;
+        if (OB_FAIL(tablet_to_table_.set_refactored(tablet_id.id(), common::OB_INVALID_ID))) {
+        }
+      }
+    } else if (OB_UNLIKELY(infos.count() != 1)) {
+      ret = common::OB_ERR_UNEXPECTED;
+    } else {
+      table_id = infos.at(0).get_table_id();
+      if (common::OB_INVALID_ID == table_id) {
+        ret = common::OB_ERR_UNEXPECTED;
+      } else if (OB_FAIL(tablet_to_table_.set_refactored(tablet_id.id(), table_id))) {
+      }
+    }
+  }
+  return ret;
+}
+
+// Evaluate every AI column of the table through the SQL engine and publish the
+// results. The statement is executed in its own transaction with the inner SQL
+// connection (whose session is marked as an inner session, so it may write the
+// otherwise read-only AI columns).
+int ObCSAiColumnProcessor::handle_table_(uint64_t table_id)
+{
+  int ret = common::OB_SUCCESS;
+  const schema::ObTableSchema *table_schema = NULL;
+  const schema::ObDatabaseSchema *db_schema = NULL;
+  if (OB_ISNULL(GCTX.sql_proxy_)) {
+    ret = common::OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(schema_guard_.get_table_schema(table_id, table_schema))) {
+  } else if (OB_ISNULL(table_schema) || !table_schema->is_user_table()
+             || !table_schema->has_ai_column()) {
+    // nothing to do
+  } else if (OB_FAIL(schema_guard_.get_database_schema(table_schema->get_database_id(),
+                                                       db_schema))) {
+  } else if (OB_ISNULL(db_schema)) {
+    ret = common::OB_ERR_UNEXPECTED;
+  } else {
+    const common::ObString &db_name = db_schema->get_database_name_str();
+    const common::ObString &table_name = table_schema->get_table_name_str();
+    for (schema::ObTableSchema::const_column_iterator it = table_schema->column_begin();
+         OB_SUCC(ret) && NULL != it && it != table_schema->column_end(); ++it) {
+      const schema::ObColumnSchemaV2 *column = *it;
+      if (OB_ISNULL(column) || !column->is_ai_column()
+          || column->get_ai_column_expr().empty()) {
+        continue;
+      }
+      const common::ObString &expr = column->get_ai_column_expr();
+      const common::ObString &col_name = column->get_column_name_str();
+      ObSqlString sql;
+      if (OB_FAIL(sql.append_fmt(
+              "UPDATE `%.*s`.`%.*s` SET `%.*s` = (%.*s) "
+              "WHERE `%.*s` IS NULL AND (%.*s) IS NOT NULL LIMIT 8",
+              db_name.length(), db_name.ptr(),
+              table_name.length(), table_name.ptr(),
+              col_name.length(), col_name.ptr(),
+              expr.length(), expr.ptr(),
+              col_name.length(), col_name.ptr(),
+              expr.length(), expr.ptr()))) {
+      } else {
+        ObMySQLTransaction trans;
+        int tmp_ret = trans.start(GCTX.sql_proxy_);
+        if (OB_SUCCESS != tmp_ret) {
+          LOG_WARN("failed to start ai column transaction", K(tmp_ret), K(table_id));
+        } else {
+          int64_t affected_rows = 0;
+          tmp_ret = trans.write(sql.ptr(), affected_rows);
+          if (OB_SUCCESS != tmp_ret) {
+            int end_ret = trans.end(false);
+            LOG_WARN("failed to update ai column", K(tmp_ret), K(table_id), K(end_ret));
+          } else {
+            int end_ret = trans.end(true);
+            if (OB_SUCCESS != end_ret) {
+              LOG_WARN("failed to commit ai column result", K(end_ret), K(table_id));
+            } else if (affected_rows > 0) {
+              LOG_INFO("ai column generated", K(table_id), K(affected_rows));
+            }
+          }
+        }
+      }
+    }
+  }
+  return ret;
+}
+
+int ObCSAiColumnProcessor::process(common::ObIArray<ObCSRow> &rows)
+{
+  int ret = common::OB_SUCCESS;
+  if (OB_FAIL(init_schema_guard_())) {
+  } else if (!tablet_to_table_.created()
+             && OB_FAIL(tablet_to_table_.create(64, "CSAiColT2T"))) {
+  } else if (!done_tables_.created()
+             && OB_FAIL(done_tables_.create(64, "CSAiColDone"))) {
+  } else if (OB_FAIL(done_tables_.reuse())) {
+  } else {
+    for (int64_t i = 0; OB_SUCC(ret) && i < rows.count(); ++i) {
+      const ObCSRow &row = rows.at(i);
+      if (blocksstable::DF_INSERT != row.dml_flag_
+          && blocksstable::DF_UPDATE != row.dml_flag_) {
+        continue;
+      }
+      uint64_t table_id = common::OB_INVALID_ID;
+      int tmp_ret = resolve_table_id_from_tablet_id_(row.tablet_id_, table_id);
+      if (OB_SUCCESS != tmp_ret || common::OB_INVALID_ID == table_id) {
+        LOG_WARN("failed to resolve table id for ai column", K(tmp_ret), K(row.tablet_id_));
+        continue;
+      }
+      int64_t dummy = 0;
+      if (OB_SUCCESS == done_tables_.get_refactored(table_id, dummy)) {
+        continue;
+      }
+      if (OB_SUCCESS != (tmp_ret = done_tables_.set_refactored(table_id, 1))) {
+        LOG_WARN("failed to mark ai column table done", K(tmp_ret), K(table_id));
+        continue;
+      }
+      tmp_ret = handle_table_(table_id);
+      if (OB_SUCCESS != tmp_ret) {
+        LOG_WARN("failed to handle ai column table", K(tmp_ret), K(table_id));
+      }
+    }
+  }
+  return ret;
+}
+
+// ---------------------------------------------------------------------------
+// ObCSPluginAiColumn
+// ---------------------------------------------------------------------------
+
+ObCSPluginAiColumn::ObCSPluginAiColumn()
+  : ObCSPlugin(),
+    is_inited_(false)
+{
+  set_plugin_type(CS_PLUGIN_AI_COLUMN);
+}
+
+ObCSPluginAiColumn::~ObCSPluginAiColumn()
+{
+  destroy();
+}
+
+int ObCSPluginAiColumn::init()
+{
+  int ret = common::OB_SUCCESS;
+  if (is_inited_) {
+    ret = common::OB_INIT_TWICE;
+  } else {
+    is_inited_ = true;
+  }
+  return ret;
+}
+
+void ObCSPluginAiColumn::destroy()
+{
+  is_inited_ = false;
+}
+
+int ObCSPluginAiColumn::process(common::ObIArray<ObCSRow> &rows, ObCSExecCtx &ctx)
+{
+  int ret = common::OB_SUCCESS;
+  if (!is_inited_) {
+    ret = common::OB_NOT_INIT;
+  } else if (rows.count() == 0) {
+    // nothing to do
+  } else {
+    ObCSAiColumnProcessor processor(ctx);
+    ret = processor.process(rows);
+  }
+  return ret;
+}
+
+int ObCSPluginAiColumn::commit()
+{
+  return common::OB_SUCCESS;
+}
+
+ObCSPlugin *create_ai_column_plugin()
+{
+  return OB_NEW(ObCSPluginAiColumn, common::ObMemAttr("CSAiColumn"));
+}
+
+}  // namespace share
+}  // namespace oceanbase

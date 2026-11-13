@@ -23,6 +23,7 @@ OBSERVER_UNITY_GROUPS = [
             "src/observer/change_stream/ob_change_stream_plugin.cpp",
             "src/observer/change_stream/ob_change_stream_mgr.cpp",
             "src/observer/change_stream/ob_cs_plugin_async_index.cpp",
+            "src/observer/change_stream/ob_cs_plugin_ai_column.cpp",
         ],
         generated_srcs = [],
         external_srcs = [],
