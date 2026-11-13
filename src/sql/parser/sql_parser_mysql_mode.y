@@ -336,7 +336,7 @@ END_P SET_VAR DELIMITER
         REPEATABLE RESET RESPECT RESTART RESTORE RESUME RETURNED_SQLSTATE RETURNS RETURNING REVERSE
         REWRITE ROLLBACK ROLLUP ROUTINE ROW ROWID ROW_COUNT ROW_FORMAT ROWS RTREE
         RUN RECYCLEBIN REPLICATION ROTATE ROW_NUMBER RUDUNDANT RECURSIVE RANDOM REDO_TRANSPORT_OPTIONS
-        RANK READ_ONLY RECOVERY REJECT ROLE
+        RANK READ_ONLY RECOVERY REJECT ROLE RETRY
 
         SAMPLE SAVEPOINT SCALARS SCHEMA_NAME SCN SCOPE SCORE SECOND SECURITY SEED
         SEMISTRUCT_ENCODING_TYPE SERIAL SERIALIZABLE SESSION SESSION_USER SET_TP SHARE SHARED SHUTDOWN SIGNED
@@ -424,6 +424,7 @@ END_P SET_VAR DELIMITER
 %type <node> int_or_decimal
 %type <node> opt_column_attribute_list column_attribute column_attribute_list opt_column_default_value opt_column_default_value_list
 %type <node> opt_ai_column_with ai_column_option_list ai_column_option
+%type <node> opt_where_clause
 %type <node> show_stmt from_or_in columns_or_fields database_or_schema index_or_indexes_or_keys opt_from_or_in_database_clause opt_show_condition opt_desc_column_option opt_status opt_storage opt_show_engine check_table_options check_table_option
 %type <node> prepare_stmt stmt_name preparable_stmt
 %type <node> variable_set_stmt var_and_val_list var_and_val to_or_eq set_expr_or_default sys_var_and_val
@@ -14787,6 +14788,26 @@ DROP CONSTRAINT constraint_name
 {
   (void)($2);
   (void)($3);
+  $$ = NULL;
+}
+| RETRY AI COLUMN column_name opt_where_clause
+{
+  /* ALTER TABLE t RETRY AI COLUMN c [WHERE <cond>] */
+  ParseNode *retry_node = NULL;
+  ParseNode *col_node = NULL;
+  malloc_non_terminal_node(col_node, result->malloc_pool_, T_AI_COLUMN_RETRY_COLUMN, 1, $4);
+  malloc_non_terminal_node(retry_node, result->malloc_pool_, T_AI_COLUMN_RETRY, 2, col_node, $5);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_ALTER_AI_COLUMN_RETRY, 1, retry_node);
+}
+;
+
+opt_where_clause:
+  WHERE expr
+{
+  $$ = $2;
+}
+| /*empty*/
+{
   $$ = NULL;
 }
 ;

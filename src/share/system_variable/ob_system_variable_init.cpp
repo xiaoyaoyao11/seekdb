@@ -47,6 +47,7 @@ const ObSysVarClassType ESSENTIAL_SYS_VARS[] = {
   SYS_VAR_OB_LOG_LEVEL,
   SYS_VAR_OB_READ_CONSISTENCY,
   SYS_VAR_OB_GLOBAL_DEBUG_SYNC,
+  SYS_VAR_AI_COLUMN_STRICT_READ,
 
   // all system vars with INFLUENCE_PLAN flag - affect execution plan generation
   SYS_VAR_CHARACTER_SET_RESULTS,        // character_set_results
@@ -9922,6 +9923,19 @@ static struct VarsInit{
       ObSysVarsIdToArrayIdx[SYS_VAR_ENABLE_FILE_SQL] = 719 ;
       ObSysVars[719].base_value_ = "0" ;
     ObSysVars[719].alias_ = "OB_SV_ENABLE_FILE_SQL" ;
+    }();
+
+    [&] (){
+      ObSysVars[720].default_value_ = "0" ;
+      ObSysVars[720].info_ = "when on, a statement that reads an AI column with unfinished tasks fails immediately instead of returning NULL" ;
+      ObSysVars[720].name_ = "ai_column_strict_read" ;
+      ObSysVars[720].data_type_ = ObIntType ;
+      ObSysVars[720].flags_ = ObSysVarFlag::SESSION_SCOPE | ObSysVarFlag::NEED_SERIALIZE ;
+      ObSysVars[720].id_ = SYS_VAR_AI_COLUMN_STRICT_READ ;
+      cur_max_var_id = MAX(cur_max_var_id, static_cast<int64_t>(SYS_VAR_AI_COLUMN_STRICT_READ)) ;
+      ObSysVarsIdToArrayIdx[SYS_VAR_AI_COLUMN_STRICT_READ] = 720 ;
+      ObSysVars[720].base_value_ = "0" ;
+    ObSysVars[720].alias_ = "OB_SV_AI_COLUMN_STRICT_READ" ;
     }();
 
     if (cur_max_var_id >= ObSysVarMeta::OB_MAX_SYS_VAR_ID) {

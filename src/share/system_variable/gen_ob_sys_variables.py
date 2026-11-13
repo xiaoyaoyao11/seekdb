@@ -1100,6 +1100,7 @@ def generate_essential_sys_vars_in_init_cpp(cpp_filename, list_sorted_by_id):
     "debug_sync",
     "ob_global_debug_sync",
     "wait_timeout",
+    "ai_column_strict_read",
   ]
 
   essential_vars = []
