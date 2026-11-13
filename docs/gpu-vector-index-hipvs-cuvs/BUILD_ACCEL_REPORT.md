@@ -108,7 +108,18 @@ staging buffers.  Only `intermediate_graph_degree` and `nn_descent_niter` on the
 | v2 | 160 / 50 | `build=1.900x, query=1.005x, gates=pass` | **12.209** |
 | v3 | 128 / 20 | `gates failed: hidden250k:recall@100_baseline_delta,hidden250k:query_regression` | 0 |
 | v4 | 128 / 40 | `gates failed: hidden250k:recall@100_baseline_delta` | 0 |
-| v5 | 160 / 30 | pending official run | - |
+| v5 | 160 / 30 | official run submitted; result unreadable while the platform session is expired | - |
+| v6 | 160 / 20 | candidate, not yet submitted | - |
+
+Decision rule after the v5 result becomes readable:
+
+- If v5 reports `gates=pass`, the 30-iteration budget is safe and v6 (20) is the
+  next step toward `build~3x`.  The engine may submit it automatically.
+- If v5 reports `hidden250k:query_regression`, the descent budget cannot go below
+  40; discard v6 and submit `160 / 40` instead, which is the smallest budget that
+  cleared that gate at intermediate=128.
+- If v5 reports `hidden250k:recall@100_baseline_delta` even at 160, revert to the
+  known-good `160 / 50` (12.209) and stop sweeping these two parameters.
 
 Two conclusions from the v3/v4 pair:
 
