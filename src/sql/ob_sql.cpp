@@ -51,6 +51,28 @@ using namespace pl;
 namespace sql
 {
 
+namespace
+{
+
+// 文件表函数的结果依赖本地文件内容与文件位置，执行计划不可跨语句复用
+bool is_file_table_sql(const ObString &sql)
+{
+  static const char *const patterns[] = {"read_csv", "read_json", "read_parquet", "glob("};
+  const int64_t pattern_cnt = static_cast<int64_t>(sizeof(patterns) / sizeof(patterns[0]));
+  bool found = false;
+  for (int64_t k = 0; !found && k < pattern_cnt; ++k) {
+    const int64_t plen = static_cast<int64_t>(strlen(patterns[k]));
+    for (int64_t i = 0; !found && i + plen <= sql.length(); ++i) {
+      if (0 == strncasecmp(sql.ptr() + i, patterns[k], plen)) {
+        found = true;
+      }
+    }
+  }
+  return found;
+}
+
+} // namespace
+
 const int64_t ObSql::max_error_length = 80;
 const int64_t ObSql::SQL_MEM_SIZE_LIMIT = 1024 * 1024 * 64;
 
@@ -1197,6 +1219,9 @@ int ObSql::handle_sql_execute(const ObString &sql,
     ret = OB_INVALID_ARGUMENT;
   } else {
     use_plan_cache = session->get_local_ob_enable_plan_cache();
+    if (use_plan_cache && is_file_table_sql(sql)) {
+      use_plan_cache = false;
+    }
   }
 
   ObPlanCacheCtx pc_ctx(sql, mode, allocator, context, ectx);
