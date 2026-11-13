@@ -911,6 +911,24 @@ int ObTableModifyOp::calc_single_table_loc()
   return ret;
 }
 
+bool ObTableModifyOp::has_ai_column(const ObDMLBaseCtDef &dml_ctdef)
+{
+  bool has_ai = false;
+  if (!dml_ctdef.is_primary_index_) {
+    // only the main table owns the AI columns
+  } else {
+    ObSchemaGetterGuard *schema_guard = get_exec_ctx().get_sql_ctx()->schema_guard_;
+    const ObTableSchema *table_schema = nullptr;
+    if (OB_NOT_NULL(schema_guard)
+        && OB_SUCCESS == schema_guard->get_table_schema(
+                          dml_ctdef.das_base_ctdef_.table_id_, table_schema)
+        && OB_NOT_NULL(table_schema)) {
+      has_ai = table_schema->has_ai_column();
+    }
+  }
+  return has_ai;
+}
+
 int ObTableModifyOp::open_inner_conn()
 {
   int ret = OB_SUCCESS;

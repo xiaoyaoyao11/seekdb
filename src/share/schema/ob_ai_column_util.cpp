@@ -17,7 +17,7 @@
 #define USING_LOG_PREFIX SHARE
 
 #include "share/schema/ob_ai_column_util.h"
-#include "lib/object/ob_obj.h"
+#include "common/object/ob_obj_type.h"
 #include "share/object/ob_obj_cast.h"
 
 namespace oceanbase

@@ -319,6 +319,7 @@ SQL_UNITY_GROUPS = [
         srcs = [
             "src/sql/engine/dml/ob_conflict_checker.cpp",
             "src/sql/engine/dml/ob_dml_ctx_define.cpp",
+            "src/sql/engine/dml/ob_ai_column_task_creator.cpp",
             "src/sql/engine/dml/ob_dml_service.cpp",
             "src/sql/engine/dml/ob_table_delete_op.cpp",
             "src/sql/engine/dml/ob_table_insert_op.cpp",
