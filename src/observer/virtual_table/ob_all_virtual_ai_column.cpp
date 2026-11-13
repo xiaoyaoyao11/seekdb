@@ -22,6 +22,7 @@
 #include "share/schema/ob_table_schema.h"
 #include "share/schema/ob_column_schema.h"
 #include "share/schema/ob_ai_column_util.h"
+#include "common/object/ob_object.h"
 
 using namespace oceanbase::common;
 using namespace oceanbase::share;
@@ -132,17 +133,17 @@ int ObAllVirtualAiColumn::fill_scanner()
               }
               case AI_COLUMN_STATE_COLUMN_ID: {
                 cells[cell_idx].set_int(
-                    ObAiColumnUtil::get_state_column_id(*table_schema, *column));
+                    ObAiColumnUtil::get_state_column_id(*allocator_, *table_schema, *column));
                 break;
               }
               case AI_COLUMN_REQUEST_COLUMN_ID: {
                 cells[cell_idx].set_int(
-                    ObAiColumnUtil::get_request_column_id(*table_schema, *column));
+                    ObAiColumnUtil::get_request_column_id(*allocator_, *table_schema, *column));
                 break;
               }
               case AI_COLUMN_RESULT_SPEC_COLUMN_ID: {
                 cells[cell_idx].set_int(
-                    ObAiColumnUtil::get_result_spec_column_id(*table_schema, *column));
+                    ObAiColumnUtil::get_result_spec_column_id(*allocator_, *table_schema, *column));
                 break;
               }
               default: {

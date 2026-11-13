@@ -29,6 +29,8 @@
 #include "share/ob_dml_sql_splicer.h"
 #include "share/inner_table/ob_inner_table_schema.h"
 #include "lib/string/ob_sql_string.h"
+#include "common/object/ob_obj_type.h"
+#include "lib/utility/utility.h"
 
 namespace oceanbase
 {

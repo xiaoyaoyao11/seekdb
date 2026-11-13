@@ -20,6 +20,7 @@
 #include "share/ob_dml_sql_splicer.h"
 #include "share/inner_table/ob_inner_table_schema.h"
 #include "lib/object/ob_object.h"
+#include "common/mysqlclient/ob_isql_client.h"
 
 namespace oceanbase
 {

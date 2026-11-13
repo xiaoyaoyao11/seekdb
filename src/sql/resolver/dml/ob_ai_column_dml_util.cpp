@@ -18,6 +18,9 @@
 
 #include "sql/resolver/dml/ob_ai_column_dml_util.h"
 #include "share/schema/ob_ai_column_util.h"
+#include "share/schema/ob_table_schema.h"
+
+#include <cctype>
 
 namespace oceanbase
 {
