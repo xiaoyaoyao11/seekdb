@@ -47,6 +47,11 @@ private:
 
   template <typename SelectResolverType>
   int select_stmt_resolver_func(ObResolverParams &params, const ParseNode &parse_tree, ObStmt *&stmt);
+
+  // DuckDB style `describe select ...` which rewrites the target query into a metadata query
+  int resolve_describe_select(const ParseNode &select_node, ObStmt *&stmt);
+  // DuckDB style `copy (select ...) to 'file' (format csv, header, nullstr 'NULL')`
+  int resolve_copy_to_file(const ParseNode &parse_tree, ObStmt *&stmt);
 private:
   // data members
   ObResolverParams params_;

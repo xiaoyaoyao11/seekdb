@@ -17,8 +17,12 @@
 #define USING_LOG_PREFIX SQL_ENG
 
 #include "sql/engine/basic/ob_function_table_op.h"
+#include "sql/engine/basic/ob_file_table_reader.h"
 #include "sql/engine/ob_exec_context.h"
 #include "sql/engine/expr/ob_expr_lob_utils.h"
+#include "share/ob_errno.h"
+#include "lib/container/ob_se_array.h"
+#include "common/timezone/ob_time_convert.h"
 
 
 namespace oceanbase
@@ -27,7 +31,151 @@ using namespace common;
 namespace sql
 {
 
-OB_SERIALIZE_MEMBER((ObFunctionTableSpec, ObOpSpec), value_expr_, column_exprs_, has_correlated_expr_);
+namespace
+{
+
+int set_datum_from_text(ObDatum &datum, const ObExpr &expr, const ObString &text)
+{
+  int ret = OB_SUCCESS;
+  const char *p = text.ptr();
+  const int64_t len = text.length();
+  char tmp[128];
+  switch (expr.datum_meta_.type_) {
+    case ObTinyIntType:
+    case ObSmallIntType:
+    case ObMediumIntType:
+    case ObInt32Type:
+    case ObIntType:
+    case ObUTinyIntType:
+    case ObUSmallIntType:
+    case ObUMediumIntType:
+    case ObUInt32Type:
+    case ObUInt64Type: {
+      if (len >= static_cast<int64_t>(sizeof(tmp))) {
+        ret = OB_INVALID_DATA;
+      } else {
+        MEMCPY(tmp, p, len);
+        tmp[len] = '\0';
+        if (0 == strncasecmp(tmp, "true", 4)) {
+          datum.set_int(1);
+        } else if (0 == strncasecmp(tmp, "false", 5)) {
+          datum.set_int(0);
+        } else {
+          datum.set_int(strtoll(tmp, NULL, 10));
+        }
+      }
+      break;
+    }
+    case ObFloatType:
+    case ObUFloatType: {
+      if (len >= static_cast<int64_t>(sizeof(tmp))) {
+        ret = OB_INVALID_DATA;
+      } else {
+        MEMCPY(tmp, p, len);
+        tmp[len] = '\0';
+        datum.set_float(strtof(tmp, NULL));
+      }
+      break;
+    }
+    case ObDoubleType:
+    case ObUDoubleType: {
+      if (len >= static_cast<int64_t>(sizeof(tmp))) {
+        ret = OB_INVALID_DATA;
+      } else {
+        MEMCPY(tmp, p, len);
+        tmp[len] = '\0';
+        datum.set_double(strtod(tmp, NULL));
+      }
+      break;
+    }
+    case ObDateType: {
+      int32_t date_val = 0;
+      if (OB_FAIL(ObTimeConverter::str_to_date(text, date_val))) {
+        LOG_WARN("failed to convert text to date", K(ret), K(text));
+      } else {
+        datum.set_date(date_val);
+      }
+      break;
+    }
+    case ObDateTimeType: {
+      ObTimeConvertCtx cvrt_ctx(NULL, false);
+      int64_t datetime_val = 0;
+      if (OB_FAIL(ObTimeConverter::str_to_datetime(text, cvrt_ctx, datetime_val))) {
+        LOG_WARN("failed to convert text to datetime", K(ret), K(text));
+      } else {
+        datum.set_datetime(datetime_val);
+      }
+      break;
+    }
+    case ObMySQLDateType: {
+      ObMySQLDate date_val;
+      if (OB_FAIL(ObTimeConverter::str_to_mdate(text, date_val))) {
+        LOG_WARN("failed to convert text to mysql date", K(ret), K(text));
+      } else {
+        datum.set_int(date_val.date_);
+      }
+      break;
+    }
+    case ObMySQLDateTimeType: {
+      ObTimeConvertCtx cvrt_ctx(NULL, false);
+      ObMySQLDateTime datetime_val;
+      if (OB_FAIL(ObTimeConverter::str_to_mdatetime(text, cvrt_ctx, datetime_val))) {
+        LOG_WARN("failed to convert text to mysql datetime", K(ret), K(text));
+      } else {
+        datum.set_int(datetime_val.datetime_);
+      }
+      break;
+    }
+    default:
+      datum.set_string(text);
+      break;
+  }
+  return ret;
+}
+
+} // anonymous namespace
+
+OB_SERIALIZE_MEMBER((ObFunctionTableSpec, ObOpSpec), value_expr_, column_exprs_, has_correlated_expr_,
+                    file_path_, file_type_, has_header_, sample_size_, column_ids_, column_names_);
+
+int ObFunctionTableOp::open_reader()
+{
+  int ret = OB_SUCCESS;
+  ObIAllocator &alloc = ctx_.get_allocator();
+  if (NULL == reader_) {
+    void *mem = alloc.alloc(sizeof(ObFileTableReader));
+    if (NULL == mem) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    } else {
+      reader_ = new (mem) ObFileTableReader();
+    }
+  }
+  if (OB_SUCC(ret)) {
+    ObFileTableDef def;
+    def.path_ = MY_SPEC.file_path_;
+    def.file_type_ = MY_SPEC.file_type_;
+    def.has_header_ = MY_SPEC.has_header_;
+    def.sample_size_ = MY_SPEC.sample_size_;
+    if (MY_SPEC.column_names_.count() > 0) {
+      ObFileTableColumn *cols = static_cast<ObFileTableColumn *>(
+          alloc.alloc(sizeof(ObFileTableColumn) * MY_SPEC.column_names_.count()));
+      if (NULL == cols) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else {
+        for (int64_t i = 0; i < MY_SPEC.column_names_.count(); ++i) {
+          new (&cols[i]) ObFileTableColumn();
+          cols[i].name_ = MY_SPEC.column_names_.at(i);
+        }
+        def.columns_ = cols;
+        def.column_count_ = MY_SPEC.column_names_.count();
+      }
+    }
+    if (OB_SUCC(ret) && OB_FAIL(reader_->open(alloc, def))) {
+      LOG_WARN("failed to open file table reader", K(ret), K(MY_SPEC.file_path_));
+    }
+  }
+  return ret;
+}
 
 int ObFunctionTableOp::inner_open()
 {
@@ -36,6 +184,10 @@ int ObFunctionTableOp::inner_open()
   already_calc_ = false;
   if (OB_ISNULL(MY_SPEC.value_expr_)) {
     ret = OB_ERR_UNEXPECTED;
+  } else if (FILE_TABLE_INVALID != MY_SPEC.file_type_) {
+    next_row_func_ = &ObFunctionTableOp::inner_get_next_row_file;
+    if (OB_FAIL(open_reader())) {
+    }
   } else if (ObExtendType == MY_SPEC.value_expr_->datum_meta_.type_) {
     next_row_func_ = &ObFunctionTableOp::inner_get_next_row_udf;
   } else {
@@ -43,6 +195,37 @@ int ObFunctionTableOp::inner_open()
   }
   return ret;
 }
+
+int ObFunctionTableOp::inner_get_next_row_file()
+{
+  int ret = OB_SUCCESS;
+  ObSEArray<ObString, 16> fields;
+  clear_evaluated_flag();
+  if (OB_ISNULL(reader_)) {
+    ret = OB_NOT_INIT;
+  } else if (OB_FAIL(ctx_.check_status())) {
+  } else if (OB_FAIL(reader_->get_next_row(fields))) {
+    if (OB_ITER_END != ret) {
+      LOG_WARN("failed to get next row from file", K(ret), K(MY_SPEC.file_type_));
+    }
+  } else {
+    for (int64_t i = 0; OB_SUCC(ret) && i < MY_SPEC.column_exprs_.count(); ++i) {
+      ObExpr *expr = MY_SPEC.column_exprs_.at(i);
+      ObDatum &datum = expr->locate_datum_for_write(eval_ctx_);
+      const int64_t file_idx = i < MY_SPEC.column_ids_.count() ? MY_SPEC.column_ids_.at(i) : i;
+      if (file_idx < 0 || file_idx >= fields.count() || NULL == fields.at(file_idx).ptr()) {
+        datum.set_null();
+      } else if (OB_FAIL(set_datum_from_text(datum, *expr, fields.at(file_idx)))) {
+        LOG_WARN("failed to convert file value", K(ret), K(file_idx));
+      }
+      if (OB_SUCC(ret)) {
+        expr->set_evaluated_projected(eval_ctx_);
+      }
+    }
+  }
+  return ret;
+}
+
 
 int ObFunctionTableOp::inner_rescan()
 {
@@ -56,6 +239,12 @@ int ObFunctionTableOp::inner_rescan()
       value_table_ = NULL;
       already_calc_ = false;
     }
+    if (FILE_TABLE_INVALID != MY_SPEC.file_type_ && NULL != reader_) {
+      reader_->close();
+      if (OB_FAIL(open_reader())) {
+        LOG_WARN("failed to reopen file table reader", K(ret));
+      }
+    }
   }
   return ret;
 }
@@ -67,11 +256,19 @@ int ObFunctionTableOp::inner_close()
   row_count_ = 0;
   col_count_ = 0;
   value_table_ = NULL;
+  if (NULL != reader_) {
+    reader_->close();
+  }
   return ret;
 }
 
 void ObFunctionTableOp::destroy()
 {
+  if (NULL != reader_) {
+    reader_->close();
+    reader_->~ObFileTableReader();
+    reader_ = NULL;
+  }
   ObOperator::destroy();
 }
 

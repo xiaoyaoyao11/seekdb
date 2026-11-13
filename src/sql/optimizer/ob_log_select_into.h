@@ -44,7 +44,10 @@ public:
         escaped_cht_(),
         cs_type_(CS_TYPE_INVALID),
         is_overwrite_(false),
-        external_properties_()
+        external_properties_(),
+        has_header_(false),
+        null_str_(),
+        is_copy_to_file_(false)
   {
   }
   virtual ~ObLogSelectInto() {}
@@ -108,6 +111,18 @@ public:
   {
     external_properties_.assign_ptr(external_properties.ptr(), external_properties.length());
   }
+  inline void set_has_header(bool has_header)
+  {
+    has_header_ = has_header;
+  }
+  inline void set_null_str(const common::ObString &null_str)
+  {
+    null_str_ = null_str;
+  }
+  inline void set_is_copy_to_file(bool is_copy_to_file)
+  {
+    is_copy_to_file_ = is_copy_to_file;
+  }
   inline ObItemType get_into_type() const
   {
     return into_type_;
@@ -164,6 +179,9 @@ public:
   {
     return external_properties_;
   }
+  inline bool get_has_header() const { return has_header_; }
+  inline common::ObString get_null_str() const { return null_str_; }
+  inline bool get_is_copy_to_file() const { return is_copy_to_file_; }
   const common::ObIArray<ObRawExpr*> &get_select_exprs() const { return select_exprs_; }
   common::ObIArray<ObRawExpr*> &get_select_exprs() { return select_exprs_; }
   virtual int est_cost() override;
@@ -188,6 +206,9 @@ private:
   common::ObCollationType cs_type_;
   bool is_overwrite_;
   common::ObString external_properties_;
+  bool has_header_;
+  common::ObString null_str_;
+  bool is_copy_to_file_;
 };
 }
 }

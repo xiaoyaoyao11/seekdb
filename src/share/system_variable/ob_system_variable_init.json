@@ -1849,6 +1849,19 @@
     "background_cn": "",
     "ref_url": ""
   },
+  "enable_file_sql": {
+    "id": 10754,
+    "name": "enable_file_sql",
+    "default_value": "0",
+    "base_value": "0",
+    "data_type": "bool",
+    "info": "enable duckdb style file table functions (read_csv/read_json/read_parquet/glob)",
+    "flags": "SESSION | NEED_SERIALIZE",
+    "publish_version": "",
+    "info_cn": "",
+    "background_cn": "",
+    "ref_url": ""
+  },
   "ob_enable_transmission_checksum": {
     "id": 10035,
     "placeholder": true,

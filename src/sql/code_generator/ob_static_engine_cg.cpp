@@ -36,6 +36,7 @@
 #include "sql/optimizer/ob_log_distinct.h"
 #include "sql/optimizer/ob_log_window_function.h"
 #include "sql/optimizer/ob_log_select_into.h"
+#include "sql/resolver/dml/ob_select_stmt.h"
 #include "sql/optimizer/ob_log_topk.h"
 #include "sql/optimizer/ob_log_granule_iterator.h"
 #include "sql/optimizer/ob_log_monitoring_dump.h"
@@ -95,6 +96,7 @@
 #include "sql/engine/pdml/static/ob_px_sstable_insert_op.h"
 #include "sql/engine/basic/ob_select_into_op.h"
 #include "sql/engine/basic/ob_function_table_op.h"
+#include "sql/engine/basic/ob_file_table_reader.h"
 #include "sql/engine/basic/ob_json_table_op.h"
 #include "sql/engine/dml/ob_table_insert_op.h"
 #include "sql/engine/basic/ob_stat_collector_op.h"
@@ -5458,6 +5460,8 @@ int ObStaticEngineCG::generate_spec(ObLogSelectInto &op, ObSelectIntoSpec &spec,
   } else if (OB_FAIL(deep_copy_obj(alloc, op.get_closed_cht(), spec.closed_cht_))) {
   } else if (OB_FAIL(deep_copy_obj(alloc, op.get_escaped_cht(), spec.escaped_cht_))) {
   } else if (OB_FAIL(spec.external_properties_.store_str(op.get_external_properties()))) {
+  } else if (!op.get_null_str().empty() &&
+             OB_FAIL(ob_write_string(alloc, op.get_null_str(), spec.null_str_))) {
   } else if (OB_FAIL(spec.user_vars_.init(op.get_user_vars().count()))) {
   } else if (OB_FAIL(spec.select_exprs_.init(op.get_select_exprs().count()))) {
   } else {
@@ -5486,6 +5490,25 @@ int ObStaticEngineCG::generate_spec(ObLogSelectInto &op, ObSelectIntoSpec &spec,
       spec.cs_type_ = op.get_cs_type();
       spec.parallel_ = op.get_parallel();
       spec.is_overwrite_ = op.get_is_overwrite();
+      spec.has_header_ = op.get_has_header();
+      spec.is_copy_to_file_ = op.get_is_copy_to_file();
+      if (spec.has_header_) {
+        const ObSelectStmt *select_stmt = static_cast<const ObSelectStmt*>(op.get_stmt());
+        if (OB_ISNULL(select_stmt)) {
+          ret = OB_ERR_UNEXPECTED;
+        } else if (OB_FAIL(spec.column_names_.init(select_stmt->get_select_item_size()))) {
+        } else {
+          for (int64_t i = 0; OB_SUCC(ret) && i < select_stmt->get_select_item_size(); ++i) {
+            const SelectItem &item = select_stmt->get_select_item(i);
+            ObString name = item.alias_name_;
+            if (name.empty()) {
+              name = item.expr_name_;
+            }
+            if (OB_FAIL(spec.column_names_.push_back(name))) {
+            }
+          }
+        }
+      }
       spec.plan_->need_drive_dml_query_ = true;
     }
   }
@@ -5503,6 +5526,8 @@ int ObStaticEngineCG::generate_spec(ObLogFunctionTable &op, ObFunctionTableSpec 
   if (OB_ISNULL(op.get_stmt())) {
     ret = OB_ERR_UNEXPECTED;
   } else if (OB_FAIL(spec.column_exprs_.init(op.get_stmt()->get_column_size()))) {
+  } else if (OB_FAIL(spec.column_ids_.init(op.get_stmt()->get_column_size()))) {
+  } else if (OB_FAIL(spec.column_names_.init(op.get_stmt()->get_column_size()))) {
   } else if (OB_UNLIKELY(op.get_num_of_child() > 1)) {
     ret = OB_ERR_UNEXPECTED;
   } else if (OB_ISNULL(value_raw_expr = op.get_value_expr())) {
@@ -5526,6 +5551,26 @@ int ObStaticEngineCG::generate_spec(ObLogFunctionTable &op, ObFunctionTableSpec 
         OZ (mark_expr_self_produced(col_item->expr_));
         OZ (generate_rt_expr(*col_item->expr_, rt_expr));
         OZ (spec.column_exprs_.push_back(rt_expr));
+        OZ (spec.column_ids_.push_back(col_item->column_id_ >= OB_APP_MIN_COLUMN_ID
+                                       ? col_item->column_id_ - OB_APP_MIN_COLUMN_ID : 0));
+        OZ (spec.column_names_.push_back(col_item->column_name_));
+      }
+    }
+    if (OB_SUCC(ret)) {
+      const TableItem *table_item = op.get_stmt()->get_table_item_by_id(op.get_table_id());
+      if (OB_ISNULL(table_item)) {
+        ret = OB_ERR_UNEXPECTED;
+      } else if (table_item->is_file_table()) {
+        const ObFileTableDef *file_def = table_item->file_table_def_;
+        ObIAllocator &spec_alloc = phy_plan_->get_allocator();
+        if (OB_ISNULL(file_def)) {
+          ret = OB_ERR_UNEXPECTED;
+        } else {
+          spec.file_type_ = file_def->file_type_;
+          spec.has_header_ = file_def->has_header_;
+          spec.sample_size_ = file_def->sample_size_;
+          OZ (ob_write_string(spec_alloc, file_def->path_, spec.file_path_));
+        }
       }
     }
   }
