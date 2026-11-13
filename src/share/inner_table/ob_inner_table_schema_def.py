@@ -2446,6 +2446,34 @@ all_ai_model_endpoint_def = dict(
 )
 def_table_schema(**all_ai_model_endpoint_def)
 
+# The AI column task queue.  One row per (AI column, row) pair which still
+# owes a model result.  The rows are written inside the transaction of the
+# DML which invalidated the AI column, so that they are visible to that
+# transaction and disappear with it on rollback.
+all_ai_column_task_def = dict(
+    owner = 'seekdb.ai_column',
+    table_name = '__all_ai_column_task',
+    table_id = '1131',
+    table_type = 'SYSTEM_TABLE',
+    gm_columns = ['gmt_create', 'gmt_modified'],
+    rowkey_columns = [
+      ('task_id', 'bigint')
+    ],
+
+    is_cluster_private = False,
+    meta_record_in_sys = False,
+    normal_columns = [
+        ('table_id', 'int', 'false'),
+        ('column_id', 'int', 'false'),
+        ('request_id', 'varchar:128', 'false'),
+        ('retry_count', 'int', 'false', '0'),
+        ('rowkey_predicate', 'varchar:2048', 'false'),
+        ('state', 'int', 'false', '0'),
+        ('eligible_ts', 'int', 'false', '0')
+    ]
+)
+def_table_schema(**all_ai_column_task_def)
+
 
 all_objauth_mysql_def = dict(
     owner = 'cjl476581',

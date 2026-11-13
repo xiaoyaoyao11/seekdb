@@ -112,6 +112,13 @@ int ObUpdateResolver::resolve(const ParseNode &parse_tree)
     }
   }
 
+  if (OB_SUCC(ret)) {
+    // An AI column whose expression depends on an updated column is reset to
+    // NULL, so that the worker recomputes it asynchronously.
+    if (OB_FAIL(invalidate_ai_columns(tables_assign, T_UPDATE_SCOPE))) {
+    }
+  }
+
   //add column for table scan, keep rowkey column in the head
   if (OB_SUCC(ret)) {
     for (int64_t i = 0; OB_SUCC(ret) && i < tables_assign.count(); i++) {
