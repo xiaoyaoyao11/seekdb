@@ -9,21 +9,22 @@
  *     80 extra descent iterations do not change recall on 250K-scale data but
  *     dominate build time.
  *   - >128-d data: NN-descent with the baseline final degree 128, intermediate
- *     160 and 30 iterations.  The final degree and the search-side itopk
- *     budget are the two things the official Hidden250K recall gates actually
- *     care about, so the final degree stays at the baseline value and only the
- *     build-side descent budget is cut.  This targets the contest score, which
- *     measures BUILD speedup (not query speedup), while keeping recall gates
- *     satisfied via a wider search queue.
+ *     160 and 40 iterations.  Intermediate 128 fails the Hidden250K recall@100
+ *     gate and the search queue cannot be widened past the baseline 512
+ *     (768 and 1024 both abort the GPU query path), so recall margin has to
+ *     come from the descent budget: 40 iterations is the first point above
+ *     the failing 30-iteration run.  This targets the contest score, which
+ *     measures BUILD speedup (not query speedup).
  *
  * Query-side changes (the 2-point throughput component):
  *   - The three device staging buffers and cuvsCagraSearchParams are created
  *     once per index handle and reused.  The baseline allocates/frees three
  *     device buffers and creates/destroys the search params on every
  *     single-row query; hipMalloc/hipFree are synchronous and expensive.
- *   - itopk_size stays at the baseline max(4*topk, 512).  Halving it to
- *     max(2*topk, 256) broke the official Hidden250K recall gates; the
- *     staging-buffer reuse alone is enough for the throughput component.
+ *   - itopk_size is fixed at the baseline max(4*topk, 512).  Halving it to
+ *     max(2*topk, 256) broke the official Hidden250K recall gates; widening
+ *     it to 768/1024 broke the gpu_path gate.  The staging-buffer reuse is
+ *     what carries the throughput component.
  *   - cudaDeviceSynchronize() is issued before the D2H copy.  cuVS executes
  *     the search on its internal stream; reading the result tensor without a
  *     wait can race the kernel.
@@ -99,14 +100,16 @@ static void sk_load_build_params(cuvsCagraIndexParams_t ip, long dim)
    *   128/20  -> recall@100 + query_regression, 0
    *   128/40  -> recall@100, 0
    *   160/30  -> recall@100, 0 (queue 512)
-   *   160/30 + itopk 1024 -> gpu_path, 0 (search path broke, see below)
-   * So intermediate=160 alone does NOT protect hidden250k recall@100;
-   * the descent budget must stay >= 50 with the baseline search queue.
-   * v8 keeps the cheaper 30-iteration build and buys the recall back
-   * with a moderately wider search-time queue (768 instead of 1024,
-   * which broke the GPU path outright), which costs query time only. */
+   *   160/30 + itopk 1024 -> gpu_path, 0
+   *   160/30 + itopk 768  -> gpu_path, 0
+   * Two conclusions: intermediate=160 is the lowest safe value, and the
+   * search queue cannot exceed the baseline 512 on this hipVS/GPU pair
+   * (both 1024 and 768 abort the first query).  v9 therefore stops touching
+   * the query path and only splits the descent budget: 40 iterations keeps
+   * a margin above the failing 30-iteration point while removing 10
+   * iterations (~3.5 s) from the 160/50 build. */
   ip->intermediate_graph_degree = low_dim ? 128 : 160;
-  ip->nn_descent_niter = low_dim ? 20 : 30;
+  ip->nn_descent_niter = low_dim ? 20 : 40;
 }
 
 static void sk_free_staging(sk_cuvs_index* h)
@@ -176,14 +179,13 @@ static int sk_tune_search_params(sk_cuvs_index* h, long topk)
   }
   if (h->sp_topk == topk) return 0;
 
-  /* The 30-iteration build loses hidden250k recall@100 with the baseline
-   * queue.  v7 tried max(8*topk,1024) and the official run failed the
-   * gpu_path gate outright, so 1024 is past what this hipVS/GPU pair can
-   * run for a single-row search.  v8 backs off to max(6*topk,768): still
-   * 1.5x the baseline queue, below the size that broke the search path.
-   * search_width stays at 4 and the final graph degree stays 128. */
-  size_t itopk = (size_t)topk * 6;
-  if (itopk < 768) itopk = 768;
+  /* Baseline queue.  v7 (1024) and v8 (768) both failed the gpu_path gate:
+   * the first single-row search aborts before any recall gate runs, so
+   * anything above 512 is unusable on this hipVS/GPU pair.  Recall must
+   * therefore be bought on the build side (see sk_load_build_params), not
+   * by widening the queue.  search_width stays at 4. */
+  size_t itopk = (size_t)topk * 4;
+  if (itopk < 512) itopk = 512;
   if (itopk < (size_t)topk) itopk = (size_t)topk;
   h->sp->itopk_size = itopk;
   h->sp->search_width = 4;

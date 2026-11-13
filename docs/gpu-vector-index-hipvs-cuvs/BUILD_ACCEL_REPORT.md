@@ -47,32 +47,33 @@ default and costs time in every iteration and in the final prune.
 | input dimension | build algorithm | graph_degree | intermediate | niter |
 | --- | --- | ---: | ---: | ---: |
 | <= 128 | NN-descent | 96 | 128 | 20 |
-| > 128 | NN-descent | 128 | 160 | 30 |
+| > 128 | NN-descent | 128 | 160 | 40 |
 
 Rationale:
 
 - **128-d**: 96/128/20 keeps the same recall on the contest workload while
   removing the over-provisioned degree and 80 unused descent iterations.
   It also produces a smaller graph, so search does not regress.
-- **>128-d**: the graph that is actually searched is set by the final degree
-  (kept at the baseline 128).  The first tuning attempt that halved
-  `itopk_size` failed all four official Hidden250K gates, so the queue is only
-  widened (never shrunk) below.  The build-side descent budget is trimmed:
-  intermediate graph 256 -> 160 and iterations 100 -> 30.  On the measured cost
-  model `build(niter) = 11.1 s + niter * 0.348 s`, this removes about 24 s from
-  the 256-d build without changing the searched graph.  An earlier IVF-PQ
-  variant also failed Hidden250K recall/VRAM checks and remains removed.
+- **>128-d**: the searched graph is set by the final degree (kept at the
+  baseline 128).  The search queue is locked at the baseline
+  `max(4*topk, 512)`: halving it failed the recall gates and widening it to
+  768/1024 failed the `gpu_path` gate, so recall margin cannot be bought on
+  the query side.  The build-side descent budget is trimmed instead:
+  intermediate graph 256 -> 160 (128 fails recall@100) and iterations
+  100 -> 40 (30 fails recall@100).  On the measured cost model this removes
+  about 25 s from the 256-d build without changing the searched graph.  An
+  earlier IVF-PQ variant also failed Hidden250K recall/VRAM checks and
+  remains removed.
 
 Query path:
 
 - Reuse the three device staging buffers and `cuvsCagraSearchParams` per index
   handle instead of allocating/freeing them on every single-row query.
-- `itopk_size = max(6 * topk, 768)` and `search_width = 4`.  The earlier
-  `max(2 * topk, 256)` tuning passed the public smoke test but failed the
-  official Hidden250K recall@10 / recall@100 gates; `max(8 * topk, 1024)`
-  broke the GPU path entirely (`gates failed: gpu_path`).  768 is the
-  compromise: wide enough to recover recall lost by the 30-iteration build,
-  small enough for the search kernel to run.
+- `itopk_size = max(4 * topk, 512)` (baseline budget) and `search_width = 4`.
+  `max(2 * topk, 256)` failed the official Hidden250K recall gates;
+  `max(8 * topk, 1024)` and `max(6 * topk, 768)` both aborted the first
+  GPU query (`gates failed: gpu_path`).  The staging reuse is what carries
+  the throughput component.
 - Synchronize the cuVS stream before copying results back to the host.
 
 ## Reference measurements
@@ -112,7 +113,8 @@ staging buffers.  Only `intermediate_graph_degree` and `nn_descent_niter` on the
 | v5 | 160 / 30 | `gates failed: hidden250k:recall@100_baseline_delta` | 0 |
 | v6 | 160 / 20 | **never submitted** — v5 proved it would fail the same gate | - |
 | v7 | 160 / 30 + `itopk=max(8k,1024)` | `gates failed: gpu_path` | 0 |
-| v8 | 160 / 30 + `itopk=max(6k,768)` | candidate, submitting | - |
+| v8 | 160 / 30 + `itopk=max(6k,768)` | `gates failed: gpu_path` | 0 |
+| v9 | 160 / 40 + `itopk=512` | candidate, submitting | - |
 
 The v5 result changes the conclusion from the v3/v4 pair.  `recall@100` is not
 governed by `intermediate_graph_degree` alone: at 160 the gate still fails once
@@ -123,19 +125,19 @@ of the ten daily attempts.
 
 v7 keeps the cheaper 30-iteration build and moves the compensation to search
 time: `itopk_size = max(8 * topk, 1024)` instead of `max(4 * topk, 512)`.
-The official run rejected it with `gates failed: gpu_path`: the 1024-entry
-queue is beyond what this hipVS/GPU pair can execute for a single-row search,
-so the GPU path itself failed before any recall gate was evaluated.  This is
-the only version so far that failed `gpu_path` instead of a recall gate, and
-the only delta against v5 (which reached the recall gates) is the queue size.
+The official run rejected it with `gates failed: gpu_path`: the first
+single-row search aborts before any recall gate is evaluated.  v8 repeated the
+experiment at `max(6 * topk, 768)` and failed the same gate, which pins the
+limit: on this hipVS/GPU pair the queue cannot go above the baseline 512, so
+the search-side compensation route is closed.
 
-v8 therefore backs the queue off to `max(6 * topk, 768)` — 1.5x the baseline,
-75% of the size that broke the GPU path — while keeping the 160/30 build.  If
-v8 still reports `gpu_path`, the queue limit is at most 512 and the search-side
-compensation is unusable; the next candidate is then a pure build-side point,
-`160/40 + itopk 512`, which removes ~3.5 s of descent work while staying above
-the v5 recall boundary.  If v8 reaches the recall gates but still fails
-`recall@100`, fall back to `160/50` (12.209) and stop tuning these two knobs.
+v9 therefore returns to `itopk = 512` and stays on the build side:
+`160/40`.  Forty iterations sits between the failing 30 and the passing 50,
+and the cost model `build(niter) ≈ F + 0.348 s * niter` puts it at roughly
+21 s, i.e. about 2.2x on the 256-d build.  If v9 still reports
+`recall@100_baseline_delta`, the next and final build-side point is `160/45`
+(~2.05x); beyond that this parameter family is exhausted and `160/50`
+(12.209) remains the fallback.
 
 Two conclusions from the v3/v4 pair:
 
