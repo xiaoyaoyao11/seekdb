@@ -33,6 +33,17 @@ using namespace oceanbase::common;
 using namespace oceanbase::common::hash;
 using namespace blocksstable;
 
+bool ObTableSchema::has_ai_column() const
+{
+  bool found = false;
+  for (const_column_iterator it = column_begin(); column_end() != it && !found; ++it) {
+    if (NULL != *it && (*it)->is_ai_column()) {
+      found = true;
+    }
+  }
+  return found;
+}
+
 namespace
 {
 constexpr int64_t DEFAULT_MICRO_BLOCK_FORMAT_VERSION = 1;

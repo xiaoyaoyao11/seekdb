@@ -405,6 +405,21 @@ int ObCSFetcher::check_has_async_index_tables_(bool &has_async)
             }
           }
         }
+        // AI columns are maintained asynchronously by the change stream too,
+        // so the fetcher must stay ACTIVE as long as any table has one.
+        if (OB_SUCC(ret) && !has_async) {
+          common::ObArray<const schema::ObTableSchema *> table_schemas;
+          if (OB_FAIL(guard.get_table_schemas_in_runtime(table_schemas))) {
+          } else {
+            for (int64_t i = 0; !has_async && i < table_schemas.count(); ++i) {
+              const schema::ObTableSchema *table_schema = table_schemas.at(i);
+              if (NULL != table_schema && table_schema->is_user_table()
+                  && table_schema->has_ai_column()) {
+                has_async = true;
+              }
+            }
+          }
+        }
       }
     }
   }

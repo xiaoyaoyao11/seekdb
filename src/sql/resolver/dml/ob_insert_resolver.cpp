@@ -837,7 +837,9 @@ int ObInsertResolver::check_insert_select_field(ObInsertStmt &insert_stmt,
     } else if (OB_FAIL(ObDMLResolver::check_basic_column_generated(value_desc,
                                                                    &insert_stmt,
                                                                    is_generated_column))) {
-    } else if (is_generated_column || value_desc->is_ai_column()) {
+    } else if (is_generated_column
+               || (value_desc->is_ai_column()
+                   && (NULL == params_.session_info_ || !params_.session_info_->is_inner()))) {
       if (select_stmt.get_table_size() == 1 &&
           select_stmt.get_table_item(0) != NULL &&
           select_stmt.get_table_item(0)->is_values_table()) {
