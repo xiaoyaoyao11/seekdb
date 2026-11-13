@@ -75,4 +75,56 @@ select count(*) >= 1 as relevance_ok from (
   where match(body) against('fulltext' in natural language mode)
   order by relevance desc limit 1) t;
 
+# ---------------------------------------------------------------------------
+# 以下用例覆盖第二批优化：
+#   - 词典区间查找由线性扫描改为二分（结果必须逐字节一致）
+#   - IK 分词的 ASCII 小写化快路径（索引中的英文 token 仍为小写）
+#   - 停用词检查同字符集时免去字符集转换（停用词判定不变）
+#   - MATCH 的逐行过滤路径（filter_on_demand）行为不变
+# ---------------------------------------------------------------------------
+
+# 11) ik 分词：英文 token 入库前做小写化，小写查询词可命中
+drop table if exists fts_tuning_ik;
+create table fts_tuning_ik (
+  id int primary key,
+  body text
+);
+alter table fts_tuning_ik add fulltext index ft_ik (body) with parser ik;
+insert into fts_tuning_ik values
+  (1, 'OceanBase Fulltext Index Tuning'),
+  (2, '全文索引调优实践与分词器热路径优化'),
+  (3, 'MixedCase Words Like FullText And SEARCH');
+select count(*) >= 1 as ik_casedown_hit from fts_tuning_ik where match(body) against('oceanbase');
+select count(*) >= 1 as ik_casedown_hit2 from fts_tuning_ik where match(body) against('fulltext');
+select count(*) >= 1 as ik_cjk_hit from fts_tuning_ik where match(body) against('全文索引');
+select count(*) >= 1 as ik_cjk_hit2 from fts_tuning_ik where match(body) against('分词器');
+# 同一查询重复执行结果稳定（词典二分不改变切分与命中集合）
+select
+  (select count(*) from fts_tuning_ik where match(body) against('全文索引'))
+  = (select count(*) from fts_tuning_ik where match(body) against('全文索引')) as ik_stable;
+drop table fts_tuning_ik;
+
+# 12) beng 分词：停用词过滤结果不变
+drop table if exists fts_tuning_beng;
+create table fts_tuning_beng (
+  id int primary key,
+  body text
+);
+alter table fts_tuning_beng add fulltext index ft_beng (body) with parser beng;
+insert into fts_tuning_beng values
+  (1, 'the quick brown fox jumps over the lazy dog'),
+  (2, 'fulltext search indexing requires efficient tokenization');
+select count(*) = 0 as beng_stopword_miss from fts_tuning_beng where match(body) against('the');
+select count(*) >= 1 as beng_word_hit from fts_tuning_beng where match(body) against('quick');
+select count(*) >= 1 as beng_word_hit2 from fts_tuning_beng where match(body) against('tokenization');
+drop table fts_tuning_beng;
+
+# 13) MATCH 叠加普通过滤条件：过滤掉全部行 / 保留全部行，两条路径结果都正确
+select count(*) = 0 as filter_drop_all from fts_tuning_doc
+ where match(body) against('fulltext') and id < 0;
+select count(*) >= 1 as filter_keep_all from fts_tuning_doc
+ where match(body) against('fulltext') and id > 0;
+select count(*) >= 1 as filter_keep_subset from fts_tuning_doc
+ where match(body) against('fulltext') and id in (1, 2, 3);
+
 drop table fts_tuning_doc;

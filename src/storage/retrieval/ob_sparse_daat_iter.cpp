@@ -352,11 +352,16 @@ int ObSRDaaTIterImpl::filter_on_demand(const int64_t count, const double relevan
   ObExpr *filter_expr = iter_param_->filter_expr_;
   ObExpr *relevance_proj_expr = iter_param_->relevance_proj_expr_;
   ObEvalCtx *eval_ctx = iter_param_->eval_ctx_;
-  ObEvalCtx::BatchInfoScopeGuard guard(*eval_ctx);
 
   if (!iter_param_->need_filter()) {
+    // 不需要过滤时无需切换 batch 信息，构造 guard 只会带来无谓的保存/恢复开销，
+    // 而本函数在每个输出行都会被调用一次。
     need_project = true;
-  } else if (eval_ctx->is_vectorized()) {
+    return ret;
+  }
+  ObEvalCtx::BatchInfoScopeGuard guard(*eval_ctx);
+
+  if (eval_ctx->is_vectorized()) {
     if (OB_UNLIKELY(count >= eval_ctx->max_batch_size_)) {
       ret = OB_ERR_UNEXPECTED;
     } else {

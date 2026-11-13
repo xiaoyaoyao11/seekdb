@@ -381,22 +381,34 @@ int ObFTRangeDict::match_with_hit(const ObString &single_word,
 int ObFTRangeDict::find_first_char_range(const ObString &single_word, ObIFTDict *&dict) const
 {
   int ret = OB_SUCCESS;
-  bool found = false;
-  for (int i = 0; OB_SUCC(ret) && !found && i < range_dicts_.size(); ++i) {
+  // 词典区间是按字典序切分出来的连续段：各区间互不重叠，且 start 严格递增，
+  // 段内覆盖 [start, end] 的连续词区间。因此可以用二分定位唯一可能命中的区间，
+  // 避免逐个区间做两次 strcmp 的线性扫描（词典查找是分词热路径的主要开销之一）。
+  // 语义与原实现完全一致：至多一个区间能覆盖该词，命中区间相同，未命中同样返回
+  // OB_ENTRY_NOT_EXIST。
+  int64_t low = 0;
+  int64_t high = range_dicts_.size() - 1;
+  int64_t found = -1;
+  while (low <= high) {
+    int64_t mid = low + (high - low) / 2;
     if (ObCharset::strcmp(ObCollationType::CS_TYPE_UTF8MB4_BIN,
-                          range_dicts_[i].start_.get_word(),
-                          single_word)
-            <= 0
-        && ObCharset::strcmp(ObCollationType::CS_TYPE_UTF8MB4_BIN,
-                             range_dicts_[i].end_.get_word(),
-                             single_word)
-               >= 0) {
-      dict = range_dicts_[i].dict_;
-      found = true;
+                          range_dicts_[mid].start_.get_word(),
+                          single_word) <= 0) {
+      found = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
     }
   }
-  if (!found) {
-    // not found, dis match
+  if (found < 0) {
+    // 小于第一个区间，不命中
+    ret = OB_ENTRY_NOT_EXIST;
+  } else if (ObCharset::strcmp(ObCollationType::CS_TYPE_UTF8MB4_BIN,
+                               range_dicts_[found].end_.get_word(),
+                               single_word) >= 0) {
+    dict = range_dicts_[found].dict_;
+  } else {
+    // 落在两个区间之间的空隙里，不命中任何区间
     ret = OB_ENTRY_NOT_EXIST;
   }
   return ret;

@@ -76,20 +76,34 @@ int ObStopWordChecker::check_stopword(const ObFTWord &word, bool &is_stopword)
   int ret = OB_SUCCESS;
   
   
-  common::ObArenaAllocator allocator(lib::ObMemAttr("ChkStopWord"));
   if (OB_UNLIKELY(!inited_)) {
     ret = OB_NOT_INIT;
   } else if (OB_UNLIKELY(word.empty())) {
     ret = OB_INVALID_ARGUMENT;
   } else {
     common::ObString cmp_str;
-    // do nothing set out with in if type is the same.
-    if (OB_FAIL(common::ObCharset::charset_convert(
-                                       allocator,
-                                       word.get_word().get_string(),
-                                       word.get_collation_type(),
-                                       stopword_type_.get_collation_type(),
-                                       cmp_str))) {
+    const common::ObCollationType src_coll = word.get_collation_type();
+    const common::ObCollationType dst_coll = stopword_type_.get_collation_type();
+    bool convert_ok = true;
+    if (OB_LIKELY(common::ObCharset::charset_type_by_coll(src_coll)
+                  == common::ObCharset::charset_type_by_coll(dst_coll))) {
+      // 源与目标同字符集时，charset_convert 只会做 out = in（不拷贝、不申请内存），
+      // 这里直接复用源串，省掉每个 token 一次的 arena 构造与析构。
+      cmp_str = word.get_word().get_string();
+    } else {
+      common::ObArenaAllocator allocator(lib::ObMemAttr("ChkStopWord"));
+      if (OB_FAIL(common::ObCharset::charset_convert(
+                     allocator,
+                     word.get_word().get_string(),
+                     src_coll,
+                     dst_coll,
+                     cmp_str))) {
+        convert_ok = false;
+      } else {
+      }
+    }
+    if (!convert_ok) {
+      // already logged
     } else {
       ObFTWord converted(cmp_str.length(), cmp_str.ptr(), stopword_type_);
       ret = stopword_set_.exist_refactored(converted);
@@ -164,15 +178,41 @@ int ObAddWord::casedown_word(const ObFTWord &src, ObFTWord &dst)
   if (OB_UNLIKELY(src.empty())) {
     ret = OB_INVALID_ARGUMENT;
   } else if (flag_.casedown()) {
-    ObString dst_str;
-    if (OB_FAIL(ObCharset::tolower(
-                    word_meta_.get_collation_type(),
-                    src.get_word().get_string(),
-                    dst_str,
-                    allocator_))) {
+    const ObString src_str = src.get_word().get_string();
+    // 小写化是分词热路径上的每 token 开销：字符集转换要按 casedn_multiply 申请一块
+    // 内存，再逐字符做一次大小写映射。当原串只含 ASCII 且不含大写字母时，任何
+    // utf8mb4 排序规则的小写化都不会改变任何一个字节（连土耳其语这类会把 'I' 映射成
+    // 非 ASCII 的规则也只影响大写字母），这里直接拷贝一份到 arena 即可，
+    // 产出的 token 字节与原实现完全一致。
+    // 注意：必须拷贝到 allocator_ 而不是复用源指针 —— 源文本在索引构建路径上来自
+    // 逐行的临时缓冲，而词条指针需要在本次分词结果被消费完之前一直有效。
+    bool need_casedown = false;
+    for (int64_t i = 0; i < src_str.length(); ++i) {
+      const unsigned char c = static_cast<unsigned char>(src_str.ptr()[i]);
+      if (OB_UNLIKELY(c >= 0x80 || (c >= 'A' && c <= 'Z'))) {
+        need_casedown = true;
+        break;
+      }
+    }
+    if (!need_casedown) {
+      ObString dst_str;
+      if (OB_FAIL(ob_write_string(allocator_, src_str, dst_str))) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else {
+        ObFTWord tmp(dst_str.length(), dst_str.ptr(), word_meta_);
+        dst = tmp;
+      }
     } else {
-      ObFTWord tmp(dst_str.length(), dst_str.ptr(), word_meta_);
-      dst = tmp;
+      ObString dst_str;
+      if (OB_FAIL(ObCharset::tolower(
+                      word_meta_.get_collation_type(),
+                      src_str,
+                      dst_str,
+                      allocator_))) {
+      } else {
+        ObFTWord tmp(dst_str.length(), dst_str.ptr(), word_meta_);
+        dst = tmp;
+      }
     }
   } else {
     dst = src;
