@@ -2084,6 +2084,11 @@ int ObDDLResolver::resolve_normal_column_attribute(ObColumnSchemaV2 &column,
     for (int64_t i = 0; OB_SUCC(ret) && i < attrs_node->num_child_; ++i) {
       ParseNode *attr_node = attrs_node->children_[i];
       switch (attr_node->type_) {
+      case T_AI_COLUMN_ATTR: {
+        if (OB_FAIL(resolve_ai_column_attribute(column, attr_node, resolve_stat))) {
+        }
+        break;
+      }
       case T_CONSTR_NOT_NULL: {
         if (OB_FAIL(resolve_normal_column_attribute_constr_not_null(column, attr_node, resolve_stat))) {
         }
@@ -2334,6 +2339,91 @@ int ObDDLResolver::resolve_normal_column_attribute(ObColumnSchemaV2 &column,
           SQL_RESV_LOG(WARN, "wrong column type for auto_increment", K(ret));
         }
       }
+    }
+  }
+  return ret;
+}
+
+int ObDDLResolver::resolve_ai_column_attribute(ObColumnSchemaV2 &column,
+                                               ParseNode *attr_node,
+                                               ObColumnResolveStat &resolve_stat)
+{
+  int ret = OB_SUCCESS;
+  UNUSED(resolve_stat);
+  if (OB_ISNULL(attr_node) || T_AI_COLUMN_ATTR != attr_node->type_
+      || 2 != attr_node->num_child_ || OB_ISNULL(attr_node->children_[0])) {
+    ret = OB_ERR_UNEXPECTED;
+    SQL_RESV_LOG(WARN, "invalid ai column attribute node", K(ret));
+  } else if (OB_ISNULL(session_info_) || OB_ISNULL(allocator_)) {
+    ret = OB_ERR_UNEXPECTED;
+    SQL_RESV_LOG(WARN, "session info or allocator is null", K(ret));
+  } else {
+    ParseNode *expr_node = attr_node->children_[0];
+    ObString expr_str(expr_node->str_len_, expr_node->str_value_);
+    int8_t sync_mode = 0;  // 0: async, the only supported mode
+    int64_t max_retries = 3;
+    ParseNode *opt_node = attr_node->children_[1];
+    while (OB_SUCC(ret) && OB_NOT_NULL(opt_node)) {
+      ParseNode *opt = NULL;
+      if (T_LINK_NODE == opt_node->type_) {
+        if (OB_ISNULL(opt_node->children_[0]) || OB_ISNULL(opt_node->children_[1])) {
+          ret = OB_ERR_UNEXPECTED;
+        } else {
+          opt = opt_node->children_[1];
+          opt_node = opt_node->children_[0];
+        }
+      } else {
+        opt = opt_node;
+        opt_node = NULL;
+      }
+      if (OB_FAIL(ret)) {
+      } else if (OB_ISNULL(opt) || T_AI_COLUMN_OPTION != opt->type_ || 2 != opt->num_child_
+                 || OB_ISNULL(opt->children_[0]) || OB_ISNULL(opt->children_[1])) {
+        ret = OB_ERR_UNEXPECTED;
+        SQL_RESV_LOG(WARN, "invalid ai column option node", K(ret));
+      } else {
+        ParseNode *name_node = opt->children_[0];
+        ParseNode *value_node = opt->children_[1];
+        ObString name(name_node->str_len_, name_node->str_value_);
+        if (0 == name.case_compare(ObString::make_string("sync_mode"))) {
+          if (T_VARCHAR != value_node->type_) {
+            ret = OB_INVALID_ARGUMENT;
+            LOG_USER_ERROR(OB_INVALID_ARGUMENT, "ai column sync_mode must be a string");
+          } else {
+            ObString mode(value_node->str_len_, value_node->str_value_);
+            if (0 == mode.case_compare(ObString::make_string("async"))) {
+              sync_mode = 0;
+            } else {
+              ret = OB_INVALID_ARGUMENT;
+              LOG_USER_ERROR(OB_INVALID_ARGUMENT, "ai column only supports sync_mode='async'");
+            }
+          }
+        } else if (0 == name.case_compare(ObString::make_string("max_retries"))) {
+          if (T_INT != value_node->type_ || value_node->value_ < 0 || value_node->value_ > 100) {
+            ret = OB_INVALID_ARGUMENT;
+            LOG_USER_ERROR(OB_INVALID_ARGUMENT, "ai column max_retries must be an integer in [0, 100]");
+          } else {
+            max_retries = value_node->value_;
+          }
+        } else {
+          ret = OB_INVALID_ARGUMENT;
+          LOG_USER_ERROR(OB_INVALID_ARGUMENT, "unknown ai column option, only sync_mode and max_retries are supported");
+        }
+      }
+    }
+    if (OB_FAIL(ret)) {
+    } else if (expr_str.empty()) {
+      ret = OB_INVALID_ARGUMENT;
+      LOG_USER_ERROR(OB_INVALID_ARGUMENT, "ai column expression is empty");
+    } else if (OB_FAIL(ObSQLUtils::convert_sql_text_to_schema_for_storing(
+                   *allocator_, session_info_->get_dtc_params(), expr_str))) {
+    } else if (OB_FAIL(column.set_ai_column_meta(expr_str, sync_mode,
+                                                 static_cast<int8_t>(max_retries)))) {
+    } else {
+      column.set_ai_column();
+      column.set_nullable(true);
+      SQL_RESV_LOG(INFO, "resolve ai column attribute", K(expr_str), K(max_retries),
+                   K(column.get_column_name_str()));
     }
   }
   return ret;
