@@ -16,7 +16,6 @@
 
 #define USING_LOG_PREFIX SQL_RESV
 #include "ob_dml_stmt.h"
-#include "sql/engine/basic/ob_file_table_reader.h"
 #include "sql/rewrite/ob_transform_utils.h"
 #include "sql/optimizer/ob_logical_operator.h"
 using namespace oceanbase::sql;
@@ -189,7 +188,6 @@ int TableItem::deep_copy(ObIRawExprCopier &expr_copier,
   SampleInfo *buf = NULL;
   if (is_json_table() 
       && OB_FAIL(deep_copy_json_table_def(*other.json_table_def_, expr_copier, allocator))) {
-  } else if (is_file_table() && OB_FAIL(deep_copy_file_table_def(*other.file_table_def_, allocator))) {
   } else if (OB_FAIL(expr_copier.copy(other.snapshot_query_expr_, snapshot_query_expr_))) {
   } else if (OB_FAIL(expr_copier.copy(other.function_table_expr_, function_table_expr_))) {
   } else if (OB_FAIL(part_ids_.assign(other.part_ids_))) {
@@ -229,35 +227,6 @@ int TableItem::deep_copy(ObIRawExprCopier &expr_copier,
       } else if (OB_FAIL(exec_params_.push_back(static_cast<ObExecParamRawExpr *>(new_expr)))) {
       }
     }
-  }
-  return ret;
-}
-
-int TableItem::deep_copy_file_table_def(const ObFileTableDef &file_def, ObIAllocator *allocator)
-{
-  int ret = OB_SUCCESS;
-  ObFileTableDef *new_def = NULL;
-  ObFileTableColumn *new_cols = NULL;
-  if (OB_ISNULL(allocator)) {
-    ret = OB_INVALID_ARGUMENT;
-  } else if (OB_ISNULL(new_def = static_cast<ObFileTableDef *>(allocator->alloc(sizeof(ObFileTableDef))))) {
-    ret = OB_ALLOCATE_MEMORY_FAILED;
-  } else if (OB_ISNULL(new_cols = static_cast<ObFileTableColumn *>(
-      allocator->alloc(sizeof(ObFileTableColumn) * (file_def.column_count_ > 0 ? file_def.column_count_ : 1))))) {
-    ret = OB_ALLOCATE_MEMORY_FAILED;
-  } else {
-    new (new_def) ObFileTableDef();
-    new_def->path_ = file_def.path_;
-    new_def->file_type_ = file_def.file_type_;
-    new_def->has_header_ = file_def.has_header_;
-    new_def->sample_size_ = file_def.sample_size_;
-    new_def->null_str_ = file_def.null_str_;
-    new_def->columns_ = new_cols;
-    new_def->column_count_ = file_def.column_count_;
-    for (int64_t i = 0; i < file_def.column_count_; ++i) {
-      new_cols[i] = file_def.columns_[i];
-    }
-    file_table_def_ = new_def;
   }
   return ret;
 }

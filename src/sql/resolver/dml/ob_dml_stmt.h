@@ -41,7 +41,6 @@ class ObStmtResolver;
 class ObDMLStmt;
 class ObStmtExprVisitor;
 class ObStmtExprGetter;
-struct ObFileTableDef;
 
 enum MulModeTableType {
   INVALID_TABLE_TYPE = 0,
@@ -231,7 +230,6 @@ struct TableItem
     ddl_schema_version_ = 0;
     ddl_table_id_ = common::OB_INVALID_ID;
     json_table_def_ = nullptr;
-    file_table_def_ = nullptr;
     table_type_ = MAX_TABLE_TYPE;
     values_table_def_ = NULL;
     file_table_def_ = NULL;
@@ -303,7 +301,6 @@ struct TableItem
   bool is_has_sample_info() const { return sample_info_ != nullptr; }
   bool is_joined_table() const { return JOINED_TABLE == type_; }
   bool is_function_table() const { return FUNCTION_TABLE == type_; }
-  bool is_file_table() const { return FUNCTION_TABLE == type_ && NULL != file_table_def_; }
   bool is_json_table() const { return JSON_TABLE == type_; }  // json_table_def_->table_type_ == MulModeTableType::OB_ORA_JSON_TABLE_TYPE
   bool is_values_table() const { return VALUES_TABLE == type_; }//used to mark values statement: values row(1,2), row(3,4);
   bool is_file_table() const { return FILE_TABLE == type_; }  // a table whose rows are read from a local file
@@ -343,7 +340,6 @@ struct TableItem
 
   ObJsonTableDef* get_json_table_def() { return json_table_def_; }
   int deep_copy_json_table_def(const ObJsonTableDef& jt_def, ObIRawExprCopier &expr_copier, ObIAllocator* allocator);
-  int deep_copy_file_table_def(const ObFileTableDef &file_def, ObIAllocator *allocator);
   int deep_copy_values_table_def(const ObValuesTableDef& table_def,
                                  ObIRawExprCopier &expr_copier,
                                  ObIAllocator* allocator);
@@ -387,8 +383,6 @@ struct TableItem
   common::ObSEArray<ObExecParamRawExpr*, 4, common::ModulePageAllocator, true> exec_params_;
   // json table
   ObJsonTableDef *json_table_def_;
-  // file table (read_csv/read_json/read_parquet/glob)
-  ObFileTableDef *file_table_def_;
   // values table
   ObValuesTableDef *values_table_def_;
   // file table

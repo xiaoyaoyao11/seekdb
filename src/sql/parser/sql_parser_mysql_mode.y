@@ -17539,7 +17539,7 @@ READ_CSV '(' file_table_arg_list ')' relation_name
   malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
   kind_node->value_ = 0;
   kind_node->is_hidden_const_ = 1;
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, $5, NULL);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, kind_node, $3, $5, NULL);
 }
 | READ_CSV '(' file_table_arg_list ')' AS relation_name
 {
@@ -17547,7 +17547,7 @@ READ_CSV '(' file_table_arg_list ')' relation_name
   malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
   kind_node->value_ = 0;
   kind_node->is_hidden_const_ = 1;
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, $6, NULL);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, kind_node, $3, $6, NULL);
 }
 | READ_CSV '(' file_table_arg_list ')'
 {
@@ -17555,7 +17555,7 @@ READ_CSV '(' file_table_arg_list ')' relation_name
   malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
   kind_node->value_ = 0;
   kind_node->is_hidden_const_ = 1;
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, NULL, NULL);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, kind_node, $3, NULL, NULL);
 }
 |
 READ_JSON '(' file_table_arg_list ')' relation_name
@@ -17564,7 +17564,7 @@ READ_JSON '(' file_table_arg_list ')' relation_name
   malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
   kind_node->value_ = 1;
   kind_node->is_hidden_const_ = 1;
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, $5, NULL);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, kind_node, $3, $5, NULL);
 }
 | READ_JSON '(' file_table_arg_list ')' AS relation_name
 {
@@ -17572,7 +17572,7 @@ READ_JSON '(' file_table_arg_list ')' relation_name
   malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
   kind_node->value_ = 1;
   kind_node->is_hidden_const_ = 1;
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, $6, NULL);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, kind_node, $3, $6, NULL);
 }
 | READ_JSON '(' file_table_arg_list ')'
 {
@@ -17580,7 +17580,7 @@ READ_JSON '(' file_table_arg_list ')' relation_name
   malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
   kind_node->value_ = 1;
   kind_node->is_hidden_const_ = 1;
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, NULL, NULL);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, kind_node, $3, NULL, NULL);
 }
 |
 READ_NDJSON '(' file_table_arg_list ')' relation_name
@@ -17589,7 +17589,7 @@ READ_NDJSON '(' file_table_arg_list ')' relation_name
   malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
   kind_node->value_ = 2;
   kind_node->is_hidden_const_ = 1;
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, $5, NULL);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, kind_node, $3, $5, NULL);
 }
 | READ_NDJSON '(' file_table_arg_list ')' AS relation_name
 {
@@ -17597,7 +17597,7 @@ READ_NDJSON '(' file_table_arg_list ')' relation_name
   malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
   kind_node->value_ = 2;
   kind_node->is_hidden_const_ = 1;
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, $6, NULL);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, kind_node, $3, $6, NULL);
 }
 | READ_NDJSON '(' file_table_arg_list ')'
 {
@@ -17605,7 +17605,7 @@ READ_NDJSON '(' file_table_arg_list ')' relation_name
   malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
   kind_node->value_ = 2;
   kind_node->is_hidden_const_ = 1;
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, NULL, NULL);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, kind_node, $3, NULL, NULL);
 }
 |
 READ_PARQUET '(' file_table_arg_list ')' relation_name
@@ -17614,7 +17614,7 @@ READ_PARQUET '(' file_table_arg_list ')' relation_name
   malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
   kind_node->value_ = 3;
   kind_node->is_hidden_const_ = 1;
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, $5, NULL);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, kind_node, $3, $5, NULL);
 }
 | READ_PARQUET '(' file_table_arg_list ')' AS relation_name
 {
@@ -17622,7 +17622,7 @@ READ_PARQUET '(' file_table_arg_list ')' relation_name
   malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
   kind_node->value_ = 3;
   kind_node->is_hidden_const_ = 1;
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, $6, NULL);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, kind_node, $3, $6, NULL);
 }
 | READ_PARQUET '(' file_table_arg_list ')'
 {
@@ -17630,7 +17630,7 @@ READ_PARQUET '(' file_table_arg_list ')' relation_name
   malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
   kind_node->value_ = 3;
   kind_node->is_hidden_const_ = 1;
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, NULL, NULL);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, kind_node, $3, NULL, NULL);
 }
 |
 GLOB '(' file_table_arg_list ')' relation_name
@@ -17639,7 +17639,7 @@ GLOB '(' file_table_arg_list ')' relation_name
   malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
   kind_node->value_ = 4;
   kind_node->is_hidden_const_ = 1;
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, $5, NULL);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, kind_node, $3, $5, NULL);
 }
 | GLOB '(' file_table_arg_list ')' AS relation_name
 {
@@ -17647,7 +17647,7 @@ GLOB '(' file_table_arg_list ')' relation_name
   malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
   kind_node->value_ = 4;
   kind_node->is_hidden_const_ = 1;
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, $6, NULL);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, kind_node, $3, $6, NULL);
 }
 | GLOB '(' file_table_arg_list ')'
 {
@@ -17655,7 +17655,7 @@ GLOB '(' file_table_arg_list ')' relation_name
   malloc_terminal_node(kind_node, result->malloc_pool_, T_INT);
   kind_node->value_ = 4;
   kind_node->is_hidden_const_ = 1;
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $kind_node, $3, NULL, NULL);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, kind_node, $3, NULL, NULL);
 }
 ;
 
