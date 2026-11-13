@@ -73,66 +73,47 @@ public:
                                   const uint8_t char_len,
                                   bool &ignore);
 
+  /**
+   * Decode the first char of the input into a unicode code point.
+   * The decoding is exactly the one used by classify_first_char, so that a
+   * caller which already knows the code point of the current char does not
+   * have to decode it again.
+   */
+  static int decode_first_char(ObCollationType coll_type,
+                                const char *input,
+                                const uint8_t char_len,
+                                ob_wc_t &unicode);
+
+  /**
+   * Classify an already decoded unicode code point.
+   * Semantics are identical to classify_first_char, but no decoding is done.
+   */
+  static int classify_unicode(const ob_wc_t unicode, CharType &type);
+
+  // Code point variants of the checkers above, for callers which already
+  // decoded the current char. The segmentation hot path decodes every char
+  // once and then reuses the code point for all the checks.
+  static int check_cn_number_unicode(ObCollationType coll_type,
+                                      const ob_wc_t unicode,
+                                      bool &is_cn_number);
+
+  static int check_num_connector_unicode(ObCollationType coll_type,
+                                         const ob_wc_t unicode,
+                                         bool &is_connector);
+
+  static int check_letter_connector_unicode(ObCollationType coll_type,
+                                            const ob_wc_t unicode,
+                                            bool &is_connector);
+
+  static int is_ignore_single_cjk_unicode(ObCollationType coll_type,
+                                          const ob_wc_t unicode,
+                                          bool &ignore);
+
 private:
   template <ObCharsetType CS_TYPE>
   static int do_classify(const char *input, const uint8_t char_len, CharType &type);
 
 private:
-  /*************************  Alpha: english letter abc *********************/
-  template <ObCharsetType CS_TYPE>
-  static typename std::enable_if<(CS_TYPE == CHARSET_UTF8MB4 || CS_TYPE == CHARSET_UTF16
-                                  || CS_TYPE == CHARSET_UTF16LE),
-                                 int>::type
-  is_alpha(const char *input, const uint8_t char_len, bool &is_alpha);
-  /****************************************************************************************/
-
-  /*************************  Arabic: num letter 123 *********************/
-
-  template <ObCharsetType CS_TYPE>
-  static typename std::enable_if<(CS_TYPE == CHARSET_UTF8MB4 || CS_TYPE == CHARSET_UTF16
-                                  || CS_TYPE == CHARSET_UTF16LE),
-                                 int>::type
-  is_arabic(const char *input, const uint8_t char_len, bool &is_arabic);
-  /****************************************************************************************/
-
-  /*************************  Chinese: Characters *********************/
-  template <ObCharsetType CS_TYPE>
-  static typename std::enable_if<(CS_TYPE == CHARSET_UTF8MB4 || CS_TYPE == CHARSET_UTF16
-                                  || CS_TYPE == CHARSET_UTF16LE),
-                                 int>::type
-  is_chinese(const char *input, const uint8_t char_len, bool &is_chinese);
-  /****************************************************************************************/
-
-  /*************************  Other CJK:  Japanese Korean Chinese *********************/
-  template <ObCharsetType CS_TYPE>
-  static typename std::enable_if<(CS_TYPE == CHARSET_UTF8MB4 || CS_TYPE == CHARSET_UTF16
-                                  || CS_TYPE == CHARSET_UTF16LE),
-                                 int>::type
-  is_other_cjk(const char *input, const uint8_t char_len, bool &is_other_cjk);
-  /****************************************************************************************/
-
-  /*************************  Surrogate: only for UTF16 *********************/
-  template <ObCharsetType CS_TYPE>
-  static
-      typename std::enable_if<(CS_TYPE == CHARSET_UTF16 || CS_TYPE == CHARSET_UTF16LE), int>::type
-      is_surrogate_high(const char *input, const uint8_t char_len, bool &is_surrogate_high);
-
-  template <ObCharsetType CS_TYPE>
-  static
-      typename std::enable_if<(CS_TYPE == CHARSET_UTF16 || CS_TYPE == CHARSET_UTF16LE), int>::type
-      is_surrogate_low(const char *input, const uint8_t char_len, bool &is_surrogate_low);
-
-  template <ObCharsetType CS_TYPE>
-  static
-      typename std::enable_if<!(CS_TYPE == CHARSET_UTF16 || CS_TYPE == CHARSET_UTF16LE), int>::type
-      is_surrogate_high(const char *input, const uint8_t char_len, bool &is_surrogate_high);
-
-  template <ObCharsetType CS_TYPE>
-  static
-      typename std::enable_if<!(CS_TYPE == CHARSET_UTF16 || CS_TYPE == CHARSET_UTF16LE), int>::type
-      is_surrogate_low(const char *input, const uint8_t char_len, bool &is_surrogate_low);
-  /****************************************************************************************/
-
   /*************************  Ignore: some char should not output itself *********************/
   template <ObCharsetType CS_TYPE>
   static typename std::enable_if<(CS_TYPE == CHARSET_UTF8MB4 || CS_TYPE == CHARSET_UTF16
@@ -189,110 +170,6 @@ private:
     return ret;
   }
 }; // End of class.
-
-template <ObCharsetType CS_TYPE>
-inline typename std::enable_if<(CS_TYPE == CHARSET_UTF8MB4 || CS_TYPE == CHARSET_UTF16
-                                || CS_TYPE == CHARSET_UTF16LE),
-                               int>::type
-ObFTCharUtil::is_alpha(const char *input, const uint8_t char_len, bool &is_alpha)
-{
-  int ret = OB_SUCCESS;
-  ob_wc_t unicode = 0;
-  if (OB_FAIL(decode_unicode<CS_TYPE>(input, char_len, unicode))) {
-  } else {
-    is_alpha = ObUnicodeBlockUtils::is_alpha(unicode);
-  }
-  return ret;
-}
-
-template <ObCharsetType CS_TYPE>
-inline typename std::enable_if<(CS_TYPE == CHARSET_UTF8MB4 || CS_TYPE == CHARSET_UTF16
-                                || CS_TYPE == CHARSET_UTF16LE),
-                               int>::type
-ObFTCharUtil::is_arabic(const char *input, const uint8_t char_len, bool &is_arabic)
-{
-  int ret = OB_SUCCESS;
-  ob_wc_t unicode = 0;
-  if (OB_FAIL(decode_unicode<CS_TYPE>(input, char_len, unicode))) {
-  } else {
-    is_arabic = ObUnicodeBlockUtils::is_arabic(unicode);
-  }
-  return ret;
-}
-
-template <ObCharsetType CS_TYPE>
-inline typename std::enable_if<(CS_TYPE == CHARSET_UTF8MB4 || CS_TYPE == CHARSET_UTF16
-                                || CS_TYPE == CHARSET_UTF16LE),
-                               int>::type
-ObFTCharUtil::is_chinese(const char *input, const uint8_t char_len, bool &is_chinese)
-{
-  int ret = OB_SUCCESS;
-  ob_wc_t unicode = 0;
-  if (OB_FAIL(decode_unicode<CS_TYPE>(input, char_len, unicode))) {
-  } else {
-    is_chinese = ObUnicodeBlockUtils::is_chinese(unicode);
-  }
-  return ret;
-}
-
-template <ObCharsetType CS_TYPE>
-inline typename std::enable_if<(CS_TYPE == CHARSET_UTF8MB4 || CS_TYPE == CHARSET_UTF16
-                                || CS_TYPE == CHARSET_UTF16LE),
-                               int>::type
-ObFTCharUtil::is_other_cjk(const char *input, const uint8_t char_len, bool &is_other_cjk)
-{
-  int ret = OB_SUCCESS;
-  ob_wc_t unicode = 0;
-  if (OB_FAIL(decode_unicode<CS_TYPE>(input, char_len, unicode))) {
-  } else {
-    is_other_cjk = ObUnicodeBlockUtils::is_other_cjk(unicode);
-  }
-  return ret;
-}
-
-template <ObCharsetType CS_TYPE>
-inline typename std::enable_if<(CS_TYPE == CHARSET_UTF16 || CS_TYPE == CHARSET_UTF16LE), int>::type
-ObFTCharUtil::is_surrogate_high(const char *input, const uint8_t char_len, bool &is_surrogate_high)
-{
-  int ret = OB_SUCCESS;
-  ob_wc_t unicode = 0;
-  if (OB_FAIL(decode_unicode<CS_TYPE>(input, char_len, unicode))) {
-  } else {
-    is_surrogate_high = ObUnicodeBlockUtils::check_high_surrogate(unicode);
-  }
-  return ret;
-}
-
-template <ObCharsetType CS_TYPE>
-inline typename std::enable_if<(CS_TYPE == CHARSET_UTF16 || CS_TYPE == CHARSET_UTF16LE), int>::type
-ObFTCharUtil::is_surrogate_low(const char *input, const uint8_t char_len, bool &is_surrogate_low)
-{
-  int ret = OB_SUCCESS;
-  ob_wc_t unicode = 0;
-  if (OB_FAIL(decode_unicode<CS_TYPE>(input, char_len, unicode))) {
-  } else {
-    is_surrogate_low = ObUnicodeBlockUtils::check_low_surrogate(unicode);
-  }
-  return ret;
-}
-
-template <ObCharsetType CS_TYPE>
-inline typename std::enable_if<!(CS_TYPE == CHARSET_UTF16 || CS_TYPE == CHARSET_UTF16LE), int>::type
-ObFTCharUtil::is_surrogate_high(const char *input, const uint8_t char_len, bool &is_surrogate_high)
-{
-  int ret = OB_SUCCESS;
-  is_surrogate_high = false;
-  return ret;
-}
-
-template <ObCharsetType CS_TYPE>
-inline typename std::enable_if<!(CS_TYPE == CHARSET_UTF16 || CS_TYPE == CHARSET_UTF16LE), int>::type
-ObFTCharUtil::is_surrogate_low(const char *input, const uint8_t char_len, bool &is_surrogate_low)
-{
-  int ret = OB_SUCCESS;
-  is_surrogate_low = false;
-  return ret;
-}
 
 template <ObCharsetType CS_TYPE>
 inline typename std::enable_if<(CS_TYPE == CHARSET_UTF8MB4 || CS_TYPE == CHARSET_UTF16
@@ -445,27 +322,22 @@ template <ObCharsetType CS_TYPE>
 inline int ObFTCharUtil::do_classify(const char *input, const uint8_t char_len, CharType &type)
 {
   int ret = OB_SUCCESS;
-  bool checker = false;
+  ob_wc_t unicode = 0;
   type = CharType::USELESS;
 
-  if (OB_FAIL(is_alpha<CS_TYPE>(input, char_len, checker))) {
-  } else if (checker) {
-    type = CharType::ENGLISH_LETTER;
-  } else if (OB_FAIL(is_arabic<CS_TYPE>(input, char_len, checker))) {
-  } else if (checker) {
-    type = CharType::ARABIC_LETTER;
-  } else if (OB_FAIL(is_chinese<CS_TYPE>(input, char_len, checker))) {
-  } else if (checker) {
-    type = CharType::CHINESE;
-  } else if (OB_FAIL(is_other_cjk<CS_TYPE>(input, char_len, checker))) {
-  } else if (checker) {
-    type = CharType::OTHER_CJK;
-  } else if (OB_FAIL(is_surrogate_high<CS_TYPE>(input, char_len, checker))) {
-  } else if (checker) {
-    type = CharType::SURROGATE_HIGH;
-  } else if (OB_FAIL(is_surrogate_low<CS_TYPE>(input, char_len, checker))) {
-  } else if (checker) {
-    type = CharType::SURROGATE_LOW;
+  // 字符分类是分词热路径上每字符都要走的判断。原实现依次调用 is_alpha /
+  // is_arabic / is_chinese / is_other_cjk / is_surrogate_high /
+  // is_surrogate_low，每个判断都会各自把同一个字符解码一次，等于把同一个
+  // UTF-8 序列重复解码 4~6 次。这里只解码一次，之后所有 Unicode 区间判断
+  // 都基于同一个码点进行。
+  // 语义完全等价：
+  //  - UTF8MB4：原实现的代理项判断直接返回 false（不解码），而合法 UTF-8
+  //    解码出来的码点不可能落在 0xD800~0xDFFF 区间（解码器会拒绝），因此
+  //    基于码点的判断结果与原来一致。
+  //  - UTF16/UTF16LE：通用解码模板返回的码点恒为 0，原实现的各项判断同样
+  //    基于 0 进行，结果不变。
+  if (OB_FAIL(decode_unicode<CS_TYPE>(input, char_len, unicode))) {
+  } else if (OB_FAIL(classify_unicode(unicode, type))) {
   }
   return ret;
 }
@@ -489,6 +361,133 @@ inline int ObFTCharUtil::classify_first_char(ObCollationType coll_type,
   }
   case CHARSET_UTF16LE: {
     ret = do_classify<CHARSET_UTF16LE>(input, char_len, type);
+    break;
+  }
+  default:
+    ret = OB_NOT_SUPPORTED;
+    STORAGE_FTS_LOG(WARN, "Not supported charset type", K(ret), K(cs_type));
+    break;
+  }
+  return ret;
+}
+
+inline int ObFTCharUtil::decode_first_char(ObCollationType coll_type,
+                                           const char *input,
+                                           const uint8_t char_len,
+                                           ob_wc_t &unicode)
+{
+  int ret = OB_SUCCESS;
+  ObCharsetType cs_type = ObCharset::charset_type_by_coll(coll_type);
+
+  switch (cs_type) {
+  case CHARSET_UTF8MB4: {
+    ret = ObFTCharUtil::decode_unicode<CHARSET_UTF8MB4>(input, char_len, unicode);
+    break;
+  }
+  case CHARSET_UTF16: {
+    ret = ObFTCharUtil::decode_unicode<CHARSET_UTF16>(input, char_len, unicode);
+    break;
+  }
+  case CHARSET_UTF16LE: {
+    ret = ObFTCharUtil::decode_unicode<CHARSET_UTF16LE>(input, char_len, unicode);
+    break;
+  }
+  default:
+    ret = OB_NOT_SUPPORTED;
+    STORAGE_FTS_LOG(WARN, "Not supported charset type", K(ret), K(cs_type));
+    break;
+  }
+  return ret;
+}
+
+inline int ObFTCharUtil::classify_unicode(const ob_wc_t unicode, CharType &type)
+{
+  int ret = OB_SUCCESS;
+  type = CharType::USELESS;
+
+  if (ObUnicodeBlockUtils::is_alpha(unicode)) {
+    type = CharType::ENGLISH_LETTER;
+  } else if (ObUnicodeBlockUtils::is_arabic(unicode)) {
+    type = CharType::ARABIC_LETTER;
+  } else if (ObUnicodeBlockUtils::is_chinese(unicode)) {
+    type = CharType::CHINESE;
+  } else if (ObUnicodeBlockUtils::is_other_cjk(unicode)) {
+    type = CharType::OTHER_CJK;
+  } else if (ObUnicodeBlockUtils::check_high_surrogate(unicode)) {
+    type = CharType::SURROGATE_HIGH;
+  } else if (ObUnicodeBlockUtils::check_low_surrogate(unicode)) {
+    type = CharType::SURROGATE_LOW;
+  }
+  return ret;
+}
+
+inline int ObFTCharUtil::check_cn_number_unicode(ObCollationType coll_type,
+                                                  const ob_wc_t unicode,
+                                                  bool &is_cn_number)
+{
+  int ret = OB_SUCCESS;
+  ObCharsetType cs_type = ObCharset::charset_type_by_coll(coll_type);
+
+  switch (cs_type) {
+  case CHARSET_UTF8MB4: {
+    is_cn_number = ObUnicodeBlockUtils::is_unicode_cn_number(unicode);
+    break;
+  }
+  default:
+    ret = OB_NOT_SUPPORTED;
+    STORAGE_FTS_LOG(WARN, "Not supported charset type", K(ret), K(cs_type));
+  }
+  return ret;
+}
+
+inline int ObFTCharUtil::check_num_connector_unicode(ObCollationType coll_type,
+                                                      const ob_wc_t unicode,
+                                                      bool &is_connector)
+{
+  int ret = OB_SUCCESS;
+  ObCharsetType cs_type = ObCharset::charset_type_by_coll(coll_type);
+
+  switch (cs_type) {
+  case CHARSET_UTF8MB4: {
+    is_connector = ObUnicodeBlockUtils::check_num_connector(unicode);
+    break;
+  }
+  default:
+    ret = OB_NOT_SUPPORTED;
+    STORAGE_FTS_LOG(WARN, "Not supported charset type", K(ret), K(cs_type));
+  }
+  return ret;
+}
+
+inline int ObFTCharUtil::check_letter_connector_unicode(ObCollationType coll_type,
+                                                         const ob_wc_t unicode,
+                                                         bool &is_connector)
+{
+  int ret = OB_SUCCESS;
+  ObCharsetType cs_type = ObCharset::charset_type_by_coll(coll_type);
+
+  switch (cs_type) {
+  case CHARSET_UTF8MB4: {
+    is_connector = ObUnicodeBlockUtils::check_letter_connector(unicode);
+    break;
+  }
+  default:
+    ret = OB_NOT_SUPPORTED;
+    STORAGE_FTS_LOG(WARN, "Not supported charset type", K(ret), K(cs_type));
+  }
+  return ret;
+}
+
+inline int ObFTCharUtil::is_ignore_single_cjk_unicode(ObCollationType coll_type,
+                                                       const ob_wc_t unicode,
+                                                       bool &ignore)
+{
+  int ret = OB_SUCCESS;
+  ObCharsetType cs_type = ObCharset::charset_type_by_coll(coll_type);
+
+  switch (cs_type) {
+  case CHARSET_UTF8MB4: {
+    ignore = ObUnicodeBlockUtils::check_ignore_as_single(unicode);
     break;
   }
   default:

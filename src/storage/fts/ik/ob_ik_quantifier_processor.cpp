@@ -49,9 +49,15 @@ int ObIKQuantifierProcessor::process_CN_number(TokenizeContext &ctx,
 {
   int ret = OB_SUCCESS;
   bool is_cn_number = false;
+  // 当前字符的码点已经在 TokenizeContext 里解码好了，直接复用，
+  // 不用再把同一个 UTF-8 序列解码一遍。
+  UNUSED(ch);
+  UNUSED(char_len);
 
   if (ObFTCharUtil::CharType::CHINESE == type
-      && OB_FAIL(ObFTCharUtil::check_cn_number(ctx.collation(), ch, char_len, is_cn_number))) {
+      && OB_FAIL(ObFTCharUtil::check_cn_number_unicode(ctx.collation(),
+                                                        ctx.unicode(),
+                                                        is_cn_number))) {
   } else if (start_ == -1 && end_ == -1) {
     if (is_cn_number) {
       start_ = ctx.get_cursor();

@@ -48,6 +48,14 @@ public:
   int current_char(const char *&ch, uint8_t &char_len);
   int current_char_type(ObFTCharUtil::CharType &type);
 
+  /**
+   * Unicode code point of the current char.
+   * The char is decoded exactly once (in prepare_next_char) and the code point
+   * is reused by all the per char checks, so the hot path does not decode the
+   * same UTF-8 sequence again and again.
+   */
+  ob_wc_t unicode() const { return unicode_; }
+
   int step_next();
 
   ObCollationType collation() const;
@@ -83,6 +91,7 @@ private:
   int64_t cursor_;
   int64_t next_char_len_;
   ObFTCharUtil::CharType next_char_type_;
+  ob_wc_t unicode_;
 
   uint32_t handle_size_;
   bool is_smart_;

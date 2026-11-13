@@ -248,17 +248,20 @@ int ObIKFTParser::init_dict(const ObFTParserParam &param)
                               ObCharsetType::CHARSET_UTF8MB4,
                               ObCollationType::CS_TYPE_UTF8MB4_BIN);
 
-  ObFTDictDesc stopword_dict_desc("stopword",
-                                  ObFTDictType::DICT_IK_STOP,
-                                  ObCharsetType::CHARSET_UTF8MB4,
-                                  ObCollationType::CS_TYPE_UTF8MB4_BIN);
-
+  // IK 分词器不做停用词过滤：ObIKFTParserDesc::get_add_word_flag 只设置
+  // casedown 与 groupby_word，没有设置 stop_word；停用词过滤由 ObAddWord
+  // 统一处理，与本词典无关。而 dict_stop_ 在本文件里唯一的读取点
+  // （get_next_token 中的停用词匹配）本来就是被注释掉的死代码，
+  // 也就是说这个词典从构造出来之后从未被查询过。
+  // 原实现却要为每一行文档都从 KV cache 里装载一次停用词词典并再构造一个
+  // ObFTRangeDict（IK 主词典有多个区间，这里还要额外付出一次区间查找与
+  // 词典对象构造的开销），纯属无效劳动。构建索引时每行文档都要走一遍这里，
+  // 因此这里直接不再装载停用词词典，分词结果与查询语义完全不变。
   if (should_read_newest_table()) {
     // clear dict cache, always false now
   } else {
     if (OB_FAIL(init_single_dict(main_dict_desc, cache_main_))) {
     } else if (OB_FAIL(init_single_dict(quan_dict_desc, cache_quan_))) {
-    } else if (OB_FAIL(init_single_dict(stopword_dict_desc, cache_stop_))) {
     }
   }
 
@@ -266,7 +269,6 @@ int ObIKFTParser::init_dict(const ObFTParserParam &param)
     // already logged.
   } else if (OB_FAIL(build_dict_from_cache(main_dict_desc, cache_main_, dict_main_))) {
   } else if (OB_FAIL(build_dict_from_cache(quan_dict_desc, cache_quan_, dict_quan_))) {
-  } else if (OB_FAIL(build_dict_from_cache(stopword_dict_desc, cache_stop_, dict_stop_))) {
   }
 
   return ret;

@@ -52,7 +52,8 @@ TokenizeContext::TokenizeContext(ObCollationType coll_type,
                                  int64_t fulltext_len,
                                  bool is_smart)
     : coll_type_(coll_type), fulltext_(fulltext), fulltext_len_(fulltext_len), cursor_(0),
-      next_char_len_(0), handle_size_(0), is_smart_(is_smart), token_list_(allocator),
+      next_char_len_(0), next_char_type_(ObFTCharUtil::CharType::USELESS), unicode_(0),
+      handle_size_(0), is_smart_(is_smart), token_list_(allocator),
       result_list_(allocator)
 {
 }
@@ -102,14 +103,18 @@ int TokenizeContext::current_char_type(ObFTCharUtil::CharType &type)
 int TokenizeContext::prepare_next_char()
 {
   int ret = OB_SUCCESS;
+  // 每个字符只解码一次：解码结果缓存在 unicode_ 里，后续所有按字符的判断
+  // （连接符、中文数字等）都直接复用这个码点，不再重复解码同一个 UTF-8 序列。
+  // 分类结果与 classify_first_char 完全一致（decode 之后做同样的区间判断）。
   if (OB_FAIL(ObCharset::first_valid_char(coll_type_,
                                           fulltext_ + cursor_,
                                           fulltext_len_ - cursor_,
                                           next_char_len_))) {
-  } else if (OB_FAIL(ObFTCharUtil::classify_first_char(coll_type_,
-                                                       fulltext_ + cursor_,
-                                                       next_char_len_,
-                                                       next_char_type_))) {
+  } else if (OB_FAIL(ObFTCharUtil::decode_first_char(coll_type_,
+                                                     fulltext_ + cursor_,
+                                                     next_char_len_,
+                                                     unicode_))) {
+  } else if (OB_FAIL(ObFTCharUtil::classify_unicode(unicode_, next_char_type_))) {
   }
   return ret;
 }

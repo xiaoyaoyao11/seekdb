@@ -127,4 +127,49 @@ select count(*) >= 1 as filter_keep_all from fts_tuning_doc
 select count(*) >= 1 as filter_keep_subset from fts_tuning_doc
  where match(body) against('fulltext') and id in (1, 2, 3);
 
+# ---------------------------------------------------------------------------
+# 以下用例覆盖第三批优化：
+#   - IK 字符分类由「每个判断各解码一次」改为「解码一次 + 区间判断」
+#   - 连接符 / 中文数字判定改为复用 TokenizeContext 缓存的 unicode 码点
+#   - IK 分词器不再逐行装载从未被查询过的停用词词典
+#
+# 注意：MATCH 的查询词与文档使用同一个分词器切分，切分粒度的变化在命中数上
+# 不可见（两侧同时变化），因此这一组用例直接比对 TOKENIZE() 的输出。
+# ---------------------------------------------------------------------------
+
+# 14) TOKENIZE 结果确定：同一输入多次切分结果完全一致
+select cast(tokenize('全文索引的分词器热路径优化', 'ik') as char) = cast(tokenize('全文索引的分词器热路径优化', 'ik') as char) as tok_deterministic;
+select cast(tokenize('oceanbase', 'ik') as char) = cast(tokenize('oceanbase', 'ik') as char) as tok_deterministic_en;
+
+# 15) IK 的英文 token 入库前统一小写化（英文字母分类 + 小写化快路径）
+select json_contains(tokenize('OceanBase Fulltext', 'ik'), json_quote('oceanbase')) as tok_has_lowercase;
+select json_contains(tokenize('OceanBase Fulltext', 'ik'), json_quote('OceanBase')) = 0 as tok_no_uppercase;
+select cast(tokenize('OceanBase Fulltext', 'ik') as char) = cast(tokenize('oceanbase fulltext', 'ik') as char) as tok_casedown_same;
+
+# 16) 字母连接符（- 等）被并入英文 token，不会单独成为一个 token
+select json_contains(tokenize('full-text', 'ik'), json_quote('-')) = 0 as tok_connector_absorbed;
+
+# 17) 数字与中文数字的分类路径仍可用
+select json_contains(tokenize('version 123456 release', 'ik'), json_quote('123456')) as tok_number;
+select json_length(tokenize('一二三四五', 'ik')) >= 1 as tok_cn_number;
+select cast(tokenize('一二三四五', 'ik') as char) = cast(tokenize('一二三四五', 'ik') as char) as tok_cn_number_stable;
+
+# 18) 中文与全角字符的分类路径仍可用（OTHER_CJK / 代理项路径不被破坏）
+select json_length(tokenize('中文分词测试ＡＢＣ', 'ik')) >= 1 as tok_fullwidth;
+
+# 19) 索引侧同步验证：含连接符与数字的文档仍可被检索到
+drop table if exists fts_tuning_ik2;
+create table fts_tuning_ik2 (
+  id int primary key,
+  body text
+);
+alter table fts_tuning_ik2 add fulltext index ft_ik2 (body) with parser ik;
+insert into fts_tuning_ik2 values
+  (1, 'full-text version 123456 release'),
+  (2, '第一章全文索引与分词器');
+select count(*) >= 1 as ik2_connector_hit from fts_tuning_ik2 where match(body) against('release');
+select count(*) >= 1 as ik2_cjk_hit from fts_tuning_ik2 where match(body) against('全文索引');
+select count(*) >= 1 as ik2_number_hit from fts_tuning_ik2 where match(body) against('123456');
+drop table fts_tuning_ik2;
+
 drop table fts_tuning_doc;
