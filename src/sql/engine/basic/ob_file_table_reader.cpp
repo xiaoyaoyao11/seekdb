@@ -902,9 +902,15 @@ int collect_glob_files(ObIAllocator &alloc, const ObString &pattern,
     dir = "/";
   }
   std::vector<std::string> matched;
+  // a shell pattern does not match a name that starts with a dot unless the
+  // pattern itself starts with one
+  const bool pattern_matches_hidden = !pat.empty() && '.' == pat[0];
   try {
     for (const auto &entry : std::filesystem::directory_iterator(std::filesystem::path(dir))) {
       std::string name = entry.path().filename().string();
+      if (!pattern_matches_hidden && !name.empty() && '.' == name[0]) {
+        continue;
+      }
       if (wildcard_match(pat.c_str(), static_cast<int64_t>(pat.size()),
                          name.c_str(), static_cast<int64_t>(name.size()))) {
         if (entry.is_regular_file()) {
