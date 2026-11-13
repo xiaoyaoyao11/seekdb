@@ -2,8 +2,9 @@
 
 ## Official results
 
-The following are contest results, not local GPU measurements. On 2026-11-13
-the AMD quota was 8 used out of 10 when this local candidate was prepared.
+The following are last verified contest results, not scores computed from local
+GPU measurements. Daily quota must be queried again before a new submission;
+historical usage does not establish the current day's remaining allowance.
 
 | Configuration, >128 dimensions | Official result | Score |
 | --- | --- | ---: |
@@ -14,9 +15,11 @@ the AMD quota was 8 used out of 10 when this local candidate was prepared.
 | NN-descent, 128/160/30, search queue max(6k,768), corrected source | gpu_path | 0 |
 | v9: NN-descent, 128/160/40, search queue max(4k,512) | build=1.876x, query=1.024x, gates=pass | 12.133 |
 
-The latest result is task 47252335, commit
-`caa3f9e0b2020bad286c063e4be5279f0e4a980d`, branch `amd-cagra-submit`.
-The highest recorded score remains 12.209, not 12.133 or 20.
+The highest last verified result is **v10: 12.259**, task `47252473`, commit
+`1e662e7bdf5b3c833893e7dd24c82cc41d3cb92d`, branch `amd-cagra-submit`.
+It reported `build=1.886x, query=1.036x, gates=pass` on 2026-11-13.
+The small v9/v10 score difference does not isolate a cause or predict a new score.
+No full-score claim is made.
 
 An earlier v8 draft contained an unclosed C comment. Its first submission and
 an unnecessary retry failed before completing the test cases. These attempts
@@ -34,10 +37,11 @@ must not be treated as evidence about GPU speed or recall.
   do not establish a universal queue-size limit or identify the failing
   kernel. The passing queue is retained as a conservative checkpoint, not
   described as a hardware limit.
-- There is no local Radeon/ROCm performance measurement available for the
-  candidate below. Passing MOCK tests is not GPU verification.
+- Real Radeon/hipVS measurements were subsequently returned from the user's
+  existing cloud host, as reported below. Passing MOCK tests alone is not GPU
+  verification, and synthetic GPU tests cannot certify an official recall gate.
 
-## v10 candidate prepared for one authorized official test
+## Passing v10 checkpoint
 
 All graph-building settings, FP32 tensors, public C ABI, and snapshot data
 inclusion stay at the passing v9 checkpoint:
@@ -68,16 +72,18 @@ The local code changes only runtime synchronization and error handling:
    is deliberately retained until a later successful cleanup or process exit.
    This failure-only retention is a safety trade-off, not a normal-path leak.
 
-These changes are a correctness/runtime-overhead candidate. No improvement
-in build speed, query throughput, VRAM, recall, or contest score is claimed.
+These were the v10 correctness/runtime-overhead changes. Its recorded official
+result is listed above. Neither that single result nor the synthetic comparison
+below isolates their benefit or establishes a general performance guarantee.
 
 The `cuvsStreamSync(cuvsResources_t)` declaration is documented by AMD here:
 <https://rocm.docs.amd.com/projects/hipVS/en/docs-25.10/reference/c_api/core_c_api.html>.
 The real project bridge header and `tools/hipvs_bridge/build.sh` were read
 from the submitted checkpoint using GitHub CLI. The C ABI matches; that script
 uses `hipcc`, `/opt/hipvs/include`, `/opt/rocm/include`, and `-lcuvs_c` (prefixes
-are overridable). Actual installed SDK headers/exports and GPU behavior remain
-unverified locally; the test SDK headers are deliberately MOCKs.
+are overridable). Actual cloud SDK headers and GPU execution were subsequently
+verified independently, as detailed below; the host regression headers remain
+deliberately MOCKs and do not constitute SDK compatibility evidence.
 
 ## Local verification
 
@@ -113,26 +119,93 @@ All five device-wide sync attempts are deliberate failure injections, including
 the cleanup retry while both waits fail. The normal success path does not use
 device-wide synchronization.
 
-## Authorized official validation and remaining limitations
+## Independent real Radeon / hipVS verification
 
-The user subsequently authorized actual testing despite the unavailable local
-Radeon host. The next step is one official submission of this new v10 candidate,
-not a replay of v9. AMD automatic submission remains disabled. Quota, branch,
-commit, required fields and cooldown are checked immediately before sending;
-the second remaining daily opportunity is not spent until this result is known.
-The official test must validate real SDK compilation, GPU routing, snapshots,
-recall and performance; none is claimed passed before that result arrives.
+Two offline batches were returned from the user's existing Radeon Cloud instance
+on 2026-11-13 UTC. They used installed `/opt/rocm/bin/hipcc`, `/opt/hipvs/include`,
+`/opt/rocm/include`, `-lcuvs_c`, and the real HIP runtime. No MOCK library,
+package installation, network request, or contest submission was used.
+The deployed CAGRA header SHA256 was
+`4fbca2261378ce270dae35ec5aa5675b317fb4374f0e426c3965f75ba9f4d29f`.
+Source and compiled-library SHA chains were checked against every report.
 
-For independently reproducible local validation, the missing checks remain:
+The first batch compiled v9/v10 and tested 2048x128, 2048x256, 250Kx128 and
+250Kx768 normal synthetic data. IDs were valid and unique, distances were finite
+and matched FP32 squared-L2 references, and snapshot ID overlap was 1.0.
 
-1. Compile against the actual deployed hipVS/ROCm SDK, without MOCK headers,
-   and confirm the required exports.
-2. Run GPU/CPU fallback smoke, actual snapshot round-trip, and representative
-   recall/VRAM checks. The repository smoke is a 10K x 128 synthetic functional
-   test, not the official Hidden250K score protocol.
-3. Compare on the same GPU/data with repeated runs, separating upload, graph
-   build, serialization and first-query time. Do not derive a predicted score
-   from the 40/50-iteration comparisons or treat device-memory samples as peaks.
+| 250K normal | v9 median build | v10 median build | v10 time reduction | v10 min single recall@100 |
+| --- | ---: | ---: | ---: | ---: |
+| 128 dimensions | 7.330318 s | 7.222099 s | 1.476% | 0.913750 |
+| 768 dimensions | 14.152870 s | 14.278876 s | -0.890% | 0.784375 |
 
-No new official result or full-score claim exists when this report is prepared.
+There were 16 queries and two repetitions per library. The differences do not
+show a reliable large-data build win. Approximately twofold timing differences
+on 2048-row smoke cases are not used to infer official performance.
+
+## Fixed high-dimensional parameter comparisons
+
+The second batch contains four successful real-SDK compilations and nine GPU
+comparisons. Each candidate changed only high-dimensional intermediate degree
+and iteration count; low-dimensional parameters, final degree 128, search, ABI
+and safety logic were unchanged. Each had a 2048x256 smoke test and 250Kx768
+normal/clustered tests with 64 queries and two alternating repetitions.
+
+| Intermediate / iterations | Distribution | Build-time reduction vs v10 | Mean recall@100 delta (percentage points) | K100 single-latency change |
+| --- | --- | ---: | ---: | ---: |
+| 160 / 36 | normal | 6.533% | -0.039063 | -0.319% |
+| 160 / 36 | clustered | 6.310% | -0.007813 | +0.990% |
+| 192 / 30 | normal | 11.728% | -0.750000 | +0.448% |
+| 192 / 30 | clustered | 10.560% | +0.015625 | +7.228% |
+| 192 / 24 | normal | 20.149% | -0.820313 | +0.229% |
+| 192 / 24 | clustered | 19.640% | 0.000000 | +9.955% |
+
+All tests passed ID/distance/snapshot integrity and snapshot overlap was 1.0.
+That is **not** an official recall-gate result. The local screen was explicitly
+heuristic: at least 1.05x build speedup, K100 latency ratio no more than 1.03,
+and mean K10/K100 single/batch recall loss no greater than 0.005. No absolute
+recall threshold or official score was computed.
+
+160/36 passed this local screen on both large distributions. Its eight-query
+smoke K10 mean recall was 1.25 percentage points below v10, so it is not claimed
+to preserve recall universally. 192/30 and 192/24 are rejected because their
+normal-data recall loss or clustered query regression exceeds the local screen.
+
+## Prepared v11 candidate: 160/36
+
+The exact source differs from v10 only here:
+
+```c
+ip->nn_descent_niter = low_dim ? 20 : 36;
+```
+
+Its SHA256 is
+`16d75f22568906659fc663d9ddeaf4b7cc43f8ef54fbfdb41a281789ec716267`,
+identical to the source compiled and measured on the Radeon host. Strict C11
+MOCK compile/control-flow regression passes in AMD and non-AMD include branches
+for both v10 and v11; assertions explicitly expect 40 and 36 respectively.
+
+This commit publishes the prepared v11 source for official validation. It has
+not yet produced an official result when this report is committed. Immediately
+before publication, the original competition account was reauthenticated:
+submission options were available, all AMD records were terminal, the branch
+still pointed to verified v10, the cooldown was satisfied, and there were zero
+AMD records on the current Asia/Shanghai calendar day. Publication itself does
+not spend a contest submission.
+
+## Remaining limitations and controlled next step
+
+1. Reauthenticate the original competition account, then verify platform date,
+   actual daily usage, no pending task, cooldown, branch and exact commit SHA.
+   Publish only the measured candidate and report, then perform at most one
+   authorized official test. Never replay an uncertain submission.
+2. Local datasets are synthetic. Independent seekdb SQL end-to-end measurement
+   and the official hidden-data protocol have not been reproduced.
+3. Large tests used two repetitions. Timings include explicit HIP fences and
+   cannot directly substitute for official query ratios.
+4. GPU memory values are samples, not peaks; host sysfs devices do not prove
+   that the user was allocated multiple GPUs.
+5. The cloud instance continues billing until the user explicitly stops or
+   destroys it. The offline scripts do not change instance state.
+
+No new official result or full-score prediction is claimed.
 

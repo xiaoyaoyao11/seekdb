@@ -118,7 +118,7 @@ static void sk_load_build_params(cuvsCagraIndexParams_t ip, long dim)
    * runtime overhead; no further build-parameter sweep is justified by
    * the observed 40/50-iteration results. */
   ip->intermediate_graph_degree = low_dim ? 128 : 160;
-  ip->nn_descent_niter = low_dim ? 20 : 40;
+  ip->nn_descent_niter = low_dim ? 20 : 36;
 }
 
 static void sk_free_staging(sk_cuvs_index* h)
