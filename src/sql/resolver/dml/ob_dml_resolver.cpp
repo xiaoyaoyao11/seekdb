@@ -3776,54 +3776,6 @@ int ObDMLResolver::resolve_hybrid_search_item(const ParseNode &parse_tree, Table
   return ret;
 }
 
-static int flatten_file_table_option_nodes(const ParseNode *node,
-                                           ObIArray<const ParseNode *> &options)
-{
-  int ret = OB_SUCCESS;
-  if (NULL == node) {
-    // empty option list
-  } else if (T_LINK_NODE == node->type_) {
-    if (OB_UNLIKELY(2 != node->num_child_)) {
-      ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("invalid option link node", K(ret), K(node->num_child_));
-    } else if (OB_FAIL(flatten_file_table_option_nodes(node->children_[0], options))) {
-    } else if (OB_FAIL(flatten_file_table_option_nodes(node->children_[1], options))) {
-    }
-  } else if (OB_FAIL(options.push_back(node))) {
-  }
-  return ret;
-}
-
-int ObDMLResolver::resolve_file_table_column_item(const TableItem &table_item,
-                                                  ObIArray<ColumnItem> &col_items)
-{
-  int ret = OB_SUCCESS;
-  const ObFileTableDef *file_def = table_item.file_table_def_;
-  CK (OB_NOT_NULL(file_def));
-  for (int64_t i = 0; OB_SUCC(ret) && i < file_def->column_count_; ++i) {
-    const ObFileTableColumn &col = file_def->columns_[i];
-    ObObjMeta meta;
-    meta.set_type(col.type_);
-    if (ob_is_string_tc(col.type_)) {
-      meta.set_collation_type(CS_TYPE_UTF8MB4_GENERAL_CI);
-      meta.set_collation_level(CS_LEVEL_IMPLICIT);
-    }
-    ObAccuracy accuracy;
-    if (ob_is_string_tc(col.type_)) {
-      accuracy.set_length(col.length_ > 0 ? col.length_ : 1);
-    } else if (ObDateTimeType == col.type_ || ObDateType == col.type_) {
-      accuracy.set_scale(0);
-    }
-    ColumnItem *col_item = NULL;
-    if (OB_FAIL(resolve_function_table_column_item(table_item, meta, accuracy, col.name_,
-                                                   OB_APP_MIN_COLUMN_ID + i, col_item))) {
-      LOG_WARN("failed to resolve file table column", K(ret), K(col.name_));
-    } else if (OB_FAIL(col_items.push_back(*col_item))) {
-    }
-  }
-  return ret;
-}
-
 int ObDMLResolver::resolve_json_table_item(const ParseNode &parse_tree, TableItem *&tbl_item)
 {
   int ret = OB_SUCCESS;
@@ -8034,9 +7986,7 @@ int ObDMLResolver::resolve_function_table_column_item(const TableItem &table_ite
   int ret = OB_SUCCESS;
   CK (OB_LIKELY(table_item.is_function_table()));
   CK (OB_NOT_NULL(table_item.function_table_expr_));
-  if (OB_SUCC(ret) && table_item.is_file_table()) {
-    ret = resolve_file_table_column_item(table_item, col_items);
-  } else if (OB_SUCC(ret)) {
+  if (OB_SUCC(ret)) {
     if (table_item.function_table_expr_->get_result_type().is_ext()) {
       ret = resolve_function_table_column_item_udf(table_item, col_items);
     } else {
