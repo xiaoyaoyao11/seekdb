@@ -2417,6 +2417,7 @@ int ObDDLResolver::resolve_ai_column_attribute(ObColumnSchemaV2 &column,
       LOG_USER_ERROR(OB_INVALID_ARGUMENT, "ai column expression is empty");
     } else if (OB_FAIL(ObSQLUtils::convert_sql_text_to_schema_for_storing(
                    *allocator_, session_info_->get_dtc_params(), expr_str))) {
+    } else if (OB_FAIL(check_ai_column_expr(column, expr_str))) {
     } else if (OB_FAIL(column.set_ai_column_meta(expr_str, sync_mode,
                                                  static_cast<int8_t>(max_retries)))) {
     } else {
@@ -2424,6 +2425,102 @@ int ObDDLResolver::resolve_ai_column_attribute(ObColumnSchemaV2 &column,
       column.set_nullable(true);
       SQL_RESV_LOG(INFO, "resolve ai column attribute", K(expr_str), K(max_retries),
                    K(column.get_column_name_str()));
+    }
+  }
+  return ret;
+}
+
+int ObDDLResolver::check_ai_column_expr(const ObColumnSchemaV2 &column,
+                                        const ObString &expr)
+{
+  int ret = OB_SUCCESS;
+  const char *p = expr.ptr();
+  int64_t len = expr.length();
+  auto is_space = [](const char c) {
+    return ' ' == c || '\t' == c || '\n' == c || '\r' == c;
+  };
+  auto is_digit = [](const char c) { return c >= '0' && c <= '9'; };
+  while (len > 0 && is_space(*p)) {
+    ++p;
+    --len;
+  }
+  auto match_name = [&](const char *name, const int64_t name_len) -> bool {
+    bool matched = len >= name_len && 0 == strncasecmp(p, name, name_len);
+    return matched && (len == name_len || '(' == p[name_len] || is_space(p[name_len]));
+  };
+  const bool is_complete = match_name("ai_complete", 11);
+  const bool is_embed = match_name("ai_embed", 8);
+  if (!is_complete && !is_embed) {
+    ret = OB_INVALID_ARGUMENT;
+    LOG_USER_ERROR(OB_INVALID_ARGUMENT,
+                   "ai column expression must call AI_COMPLETE or AI_EMBED");
+  } else if (is_complete) {
+    if (column.is_collection()) {
+      ret = OB_INVALID_ARGUMENT;
+      LOG_USER_ERROR(OB_INVALID_ARGUMENT,
+                     "AI_COMPLETE ai column must be a string or json column");
+    }
+  } else {
+    // AI_EMBED requires a VECTOR column whose dimension matches the function declaration.
+    if (!column.is_collection()) {
+      ret = OB_INVALID_ARGUMENT;
+      LOG_USER_ERROR(OB_INVALID_ARGUMENT,
+                     "AI_EMBED ai column must be a VECTOR column");
+    } else {
+      int64_t column_dim = 0;
+      const common::ObIArray<common::ObString> &type_info = column.get_extended_type_info();
+      if (type_info.count() > 0) {
+        const common::ObString &vector_type = type_info.at(0);
+        const char *lp = NULL;
+        for (int64_t i = 0; NULL == lp && i < vector_type.length(); ++i) {
+          if ('(' == vector_type.ptr()[i]) {
+            lp = vector_type.ptr() + i;
+          }
+        }
+        if (NULL != lp) {
+          column_dim = atoll(lp + 1);
+        }
+      }
+      int64_t arg_dim = 0;
+      const char *open_paren = NULL;
+      const char *end = p + len;
+      for (const char *q = p; NULL == open_paren && q < end; ++q) {
+        if ('(' == *q) {
+          open_paren = q;
+        }
+      }
+      if (NULL != open_paren) {
+        int32_t depth = 0;
+        int32_t comma_cnt = 0;
+        const char *arg3 = NULL;
+        for (const char *q = open_paren; q < end; ++q) {
+          if ('(' == *q) {
+            ++depth;
+          } else if (')' == *q) {
+            if (0 == --depth) {
+              break;
+            }
+          } else if (',' == *q && 1 == depth) {
+            ++comma_cnt;
+            if (2 == comma_cnt) {
+              arg3 = q + 1;
+            }
+          }
+        }
+        if (NULL != arg3) {
+          while (arg3 < end && is_space(*arg3)) {
+            ++arg3;
+          }
+          if (arg3 < end && is_digit(*arg3)) {
+            arg_dim = atoll(arg3);
+          }
+        }
+      }
+      if (arg_dim > 0 && column_dim > 0 && arg_dim != column_dim) {
+        ret = OB_INVALID_ARGUMENT;
+        LOG_USER_ERROR(OB_INVALID_ARGUMENT,
+                       "ai column vector dimension does not match the AI_EMBED dimension");
+      }
     }
   }
   return ret;
