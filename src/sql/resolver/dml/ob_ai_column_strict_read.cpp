@@ -26,6 +26,7 @@
 #include "share/schema/ob_column_schema.h"
 #include "share/ob_server_struct.h"
 #include "share/inner_table/ob_inner_table_schema.h"
+#include "common/mysqlclient/ob_mysql_proxy.h"
 #include "lib/string/ob_sql_string.h"
 
 namespace oceanbase

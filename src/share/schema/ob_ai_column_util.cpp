@@ -19,6 +19,7 @@
 #include "share/schema/ob_ai_column_util.h"
 #include "common/object/ob_obj_type.h"
 #include "share/object/ob_obj_cast.h"
+#include "share/schema/ob_table_schema.h"
 
 namespace oceanbase
 {
@@ -42,31 +43,31 @@ const char *ObAiColumnUtil::get_integer_instruction()
   return AI_INTEGER_INSTRUCTION;
 }
 
-uint64_t ObAiColumnUtil::get_state_column_id(const ObTableSchema &table_schema,
+uint64_t ObAiColumnUtil::get_state_column_id(ObIAllocator &allocator,
+                                             const ObTableSchema &table_schema,
                                              const ObColumnSchemaV2 &ai_column)
 {
-  ObString name = get_state_column_name(*table_schema.get_allocator(),
-                                        ai_column.get_column_name_str());
+  ObString name = get_state_column_name(allocator, ai_column.get_column_name_str());
   const ObColumnSchemaV2 *column = name.empty() ? nullptr
                                                  : table_schema.get_column_schema(name);
   return OB_ISNULL(column) ? OB_INVALID_ID : column->get_column_id();
 }
 
-uint64_t ObAiColumnUtil::get_request_column_id(const ObTableSchema &table_schema,
+uint64_t ObAiColumnUtil::get_request_column_id(ObIAllocator &allocator,
+                                               const ObTableSchema &table_schema,
                                                const ObColumnSchemaV2 &ai_column)
 {
-  ObString name = get_request_column_name(*table_schema.get_allocator(),
-                                          ai_column.get_column_name_str());
+  ObString name = get_request_column_name(allocator, ai_column.get_column_name_str());
   const ObColumnSchemaV2 *column = name.empty() ? nullptr
                                                  : table_schema.get_column_schema(name);
   return OB_ISNULL(column) ? OB_INVALID_ID : column->get_column_id();
 }
 
-uint64_t ObAiColumnUtil::get_result_spec_column_id(const ObTableSchema &table_schema,
+uint64_t ObAiColumnUtil::get_result_spec_column_id(ObIAllocator &allocator,
+                                                    const ObTableSchema &table_schema,
                                                     const ObColumnSchemaV2 &ai_column)
 {
-  ObString name = get_result_spec_column_name(*table_schema.get_allocator(),
-                                               ai_column.get_column_name_str());
+  ObString name = get_result_spec_column_name(allocator, ai_column.get_column_name_str());
   const ObColumnSchemaV2 *column = name.empty() ? nullptr
                                                  : table_schema.get_column_schema(name);
   return OB_ISNULL(column) ? OB_INVALID_ID : column->get_column_id();

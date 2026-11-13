@@ -52,11 +52,15 @@ public:
   // ---- the column ids of the three hidden columns ----
   // The hidden columns are looked up by their name, so that their ids do not
   // depend on the order in which the columns of the table were declared.
-  static uint64_t get_state_column_id(const ObTableSchema &table_schema,
+  // The allocator builds the name of the hidden column, the caller owns it.
+  static uint64_t get_state_column_id(common::ObIAllocator &allocator,
+                                      const ObTableSchema &table_schema,
                                       const ObColumnSchemaV2 &ai_column);
-  static uint64_t get_request_column_id(const ObTableSchema &table_schema,
+  static uint64_t get_request_column_id(common::ObIAllocator &allocator,
+                                        const ObTableSchema &table_schema,
                                         const ObColumnSchemaV2 &ai_column);
-  static uint64_t get_result_spec_column_id(const ObTableSchema &table_schema,
+  static uint64_t get_result_spec_column_id(common::ObIAllocator &allocator,
+                                             const ObTableSchema &table_schema,
                                              const ObColumnSchemaV2 &ai_column);
 
   // ---- the names of the three hidden columns ----

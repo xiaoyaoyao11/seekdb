@@ -25,6 +25,7 @@
 #include "sql/das/ob_das_lock_op.h"
 #include "sql/das/ob_das_utils.h"
 #include "sql/engine/dml/ob_trigger_handler.h"
+#include "sql/engine/dml/ob_ai_column_task_creator.h"
 #include "share/autoincrement/ob_i_tablet_autoincrement_service.h"
 #include "data_plane/lob/ob_lob_read.h"
 #include "data_plane/transaction/ob_i_transaction_service.h"

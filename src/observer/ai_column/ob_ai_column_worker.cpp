@@ -42,6 +42,34 @@ using namespace oceanbase::common;
 using namespace oceanbase::share;
 using namespace oceanbase::share::schema;
 
+/**
+ * Append a string literal to a SQL statement.
+ *
+ * The string is appended as a quoted literal whose special characters are
+ * escaped, so that the value of the column is read back unchanged.
+ */
+static int sql_append_hex_escape_str(const ObString &value, ObSqlString &sql)
+{
+  int ret = OB_SUCCESS;
+  if (OB_FAIL(sql.append("'"))) {
+  } else {
+    for (int64_t i = 0; OB_SUCC(ret) && i < value.length(); ++i) {
+      const char c = value.ptr()[i];
+      if ('\'' == c) {
+        ret = sql.append("''");
+      } else if ('\\' == c) {
+        ret = sql.append("\\\\");
+      } else {
+        ret = sql.append(&c, 1);
+      }
+    }
+    if (OB_SUCC(ret)) {
+      ret = sql.append("'");
+    }
+  }
+  return ret;
+}
+
 ObAiColumnWorker::ObAiColumnWorker()
     : is_inited_(false),
       is_started_(false),
