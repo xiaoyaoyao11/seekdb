@@ -84,6 +84,14 @@ private:
                              const int resolve_rule);
   int resolve_insert_mode(const ParseNode *parse_tree);
   int resolve_table_elements_from_select(const ParseNode &parse_tree);
+  // create the three hidden columns of every AI column of the table
+  int create_ai_column_hidden_columns(
+      common::ObSEArray<share::schema::ObColumnSchemaV2, SEARRAY_INIT_NUM> &resolved_cols,
+      const int64_t user_column_count);
+  int add_ai_column_hidden_column(
+      common::ObSEArray<share::schema::ObColumnSchemaV2, SEARRAY_INIT_NUM> &resolved_cols,
+      const common::ObString &column_name,
+      const int32_t data_length);
   int set_temp_table_info(share::schema::ObTableSchema &table_schema, ParseNode *commit_option_node);
 
   int resolve_table_charset_info(const ParseNode *node);

@@ -50,18 +50,21 @@ public:
   ~ObAiColumnUtil() = delete;
 
   // ---- the column ids of the three hidden columns ----
-  // The AI column id is the user visible column id; the hidden columns take
-  // the next three ids.
-  static uint64_t get_state_column_id(const ObColumnSchemaV2 &ai_column);
-  static uint64_t get_request_column_id(const ObColumnSchemaV2 &ai_column);
-  static uint64_t get_result_spec_column_id(const ObColumnSchemaV2 &ai_column);
+  // The hidden columns are looked up by their name, so that their ids do not
+  // depend on the order in which the columns of the table were declared.
+  static uint64_t get_state_column_id(const ObTableSchema &table_schema,
+                                      const ObColumnSchemaV2 &ai_column);
+  static uint64_t get_request_column_id(const ObTableSchema &table_schema,
+                                        const ObColumnSchemaV2 &ai_column);
+  static uint64_t get_result_spec_column_id(const ObTableSchema &table_schema,
+                                             const ObColumnSchemaV2 &ai_column);
 
   // ---- the names of the three hidden columns ----
-  static common::ObString get_state_column_name(common::ObAllocator &allocator,
+  static common::ObString get_state_column_name(common::ObIAllocator &allocator,
                                                  const common::ObString &ai_column_name);
-  static common::ObString get_request_column_name(common::ObAllocator &allocator,
+  static common::ObString get_request_column_name(common::ObIAllocator &allocator,
                                                    const common::ObString &ai_column_name);
-  static common::ObString get_result_spec_column_name(common::ObAllocator &allocator,
+  static common::ObString get_result_spec_column_name(common::ObIAllocator &allocator,
                                                       const common::ObString &ai_column_name);
 
   // ---- the normalized expression ----
@@ -76,7 +79,7 @@ public:
    *   BIGINT  -> "Return exactly one base-10 integer. <expr>"
    *   VARCHAR -> "<expr>"
    */
-  static int build_normalized_expr(common::ObAllocator &allocator,
+  static int build_normalized_expr(common::ObIAllocator &allocator,
                                     const common::ObString &expr,
                                     const ObColumnSchemaV2 &column,
                                     common::ObString &normalized_expr);
@@ -93,7 +96,7 @@ public:
    * derived by scanning the text for identifiers.  Only identifiers which are
    * not function names, keywords or string literals are reported.
    */
-  static int collect_dependency_columns(common::ObAllocator &allocator,
+  static int collect_dependency_columns(common::ObIAllocator &allocator,
                                         const common::ObString &expr,
                                         common::ObIArray<common::ObString> &deps);
 

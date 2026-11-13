@@ -42,22 +42,37 @@ const char *ObAiColumnUtil::get_integer_instruction()
   return AI_INTEGER_INSTRUCTION;
 }
 
-uint64_t ObAiColumnUtil::get_state_column_id(const ObColumnSchemaV2 &ai_column)
+uint64_t ObAiColumnUtil::get_state_column_id(const ObTableSchema &table_schema,
+                                             const ObColumnSchemaV2 &ai_column)
 {
-  return ai_column.get_column_id() + 1;
+  ObString name = get_state_column_name(*table_schema.get_allocator(),
+                                        ai_column.get_column_name_str());
+  const ObColumnSchemaV2 *column = name.empty() ? nullptr
+                                                 : table_schema.get_column_schema(name);
+  return OB_ISNULL(column) ? OB_INVALID_ID : column->get_column_id();
 }
 
-uint64_t ObAiColumnUtil::get_request_column_id(const ObColumnSchemaV2 &ai_column)
+uint64_t ObAiColumnUtil::get_request_column_id(const ObTableSchema &table_schema,
+                                               const ObColumnSchemaV2 &ai_column)
 {
-  return ai_column.get_column_id() + 2;
+  ObString name = get_request_column_name(*table_schema.get_allocator(),
+                                          ai_column.get_column_name_str());
+  const ObColumnSchemaV2 *column = name.empty() ? nullptr
+                                                 : table_schema.get_column_schema(name);
+  return OB_ISNULL(column) ? OB_INVALID_ID : column->get_column_id();
 }
 
-uint64_t ObAiColumnUtil::get_result_spec_column_id(const ObColumnSchemaV2 &ai_column)
+uint64_t ObAiColumnUtil::get_result_spec_column_id(const ObTableSchema &table_schema,
+                                                    const ObColumnSchemaV2 &ai_column)
 {
-  return ai_column.get_column_id() + 3;
+  ObString name = get_result_spec_column_name(*table_schema.get_allocator(),
+                                               ai_column.get_column_name_str());
+  const ObColumnSchemaV2 *column = name.empty() ? nullptr
+                                                 : table_schema.get_column_schema(name);
+  return OB_ISNULL(column) ? OB_INVALID_ID : column->get_column_id();
 }
 
-static int build_hidden_column_name(ObAllocator &allocator,
+static int build_hidden_column_name(ObIAllocator &allocator,
                                     const ObString &ai_column_name,
                                     const char *prefix,
                                     const char *suffix,
@@ -83,7 +98,7 @@ static int build_hidden_column_name(ObAllocator &allocator,
   return ret;
 }
 
-ObString ObAiColumnUtil::get_state_column_name(ObAllocator &allocator,
+ObString ObAiColumnUtil::get_state_column_name(ObIAllocator &allocator,
                                                 const ObString &ai_column_name)
 {
   ObString result;
@@ -95,7 +110,7 @@ ObString ObAiColumnUtil::get_state_column_name(ObAllocator &allocator,
   return result;
 }
 
-ObString ObAiColumnUtil::get_request_column_name(ObAllocator &allocator,
+ObString ObAiColumnUtil::get_request_column_name(ObIAllocator &allocator,
                                                   const ObString &ai_column_name)
 {
   ObString result;
@@ -107,7 +122,7 @@ ObString ObAiColumnUtil::get_request_column_name(ObAllocator &allocator,
   return result;
 }
 
-ObString ObAiColumnUtil::get_result_spec_column_name(ObAllocator &allocator,
+ObString ObAiColumnUtil::get_result_spec_column_name(ObIAllocator &allocator,
                                                       const ObString &ai_column_name)
 {
   ObString result;
@@ -119,7 +134,7 @@ ObString ObAiColumnUtil::get_result_spec_column_name(ObAllocator &allocator,
   return result;
 }
 
-int ObAiColumnUtil::build_normalized_expr(ObAllocator &allocator,
+int ObAiColumnUtil::build_normalized_expr(ObIAllocator &allocator,
                                            const ObString &expr,
                                            const ObColumnSchemaV2 &column,
                                            ObString &normalized_expr)
@@ -162,7 +177,7 @@ bool ObAiColumnUtil::is_function_name(const char *name, const int64_t len)
   return false;
 }
 
-int ObAiColumnUtil::collect_dependency_columns(ObAllocator &allocator,
+int ObAiColumnUtil::collect_dependency_columns(ObIAllocator &allocator,
                                                  const ObString &expr,
                                                  ObIArray<ObString> &deps)
 {

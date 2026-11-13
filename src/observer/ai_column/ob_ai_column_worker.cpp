@@ -18,6 +18,7 @@
 
 #include "observer/ai_column/ob_ai_column_worker.h"
 
+#include "common/mysqlclient/ob_mysql_proxy.h"
 #include "common/mysqlclient/ob_mysql_transaction.h"
 #include "lib/allocator/ob_arena_allocator.h"
 #include "lib/time/ob_time_utility.h"
@@ -142,9 +143,9 @@ int ObAiColumnWorker::collect_tasks_(ObIAllocator &allocator, ObIArray<ObAiColum
                                 "WHERE state IN (%d, %d, %d) AND eligible_ts <= %ld "
                                 "ORDER BY task_id LIMIT %ld",
                                 OB_ALL_AI_COLUMN_TASK_TNAME,
-                                AI_COLUMN_TASK_PENDING,
-                                AI_COLUMN_TASK_RUNNING,
-                                AI_COLUMN_TASK_RETRY,
+                                static_cast<int32_t>(AI_COLUMN_TASK_PENDING),
+                                static_cast<int32_t>(AI_COLUMN_TASK_RUNNING),
+                                static_cast<int32_t>(AI_COLUMN_TASK_RETRY),
                                 now_s,
                                 MAX_TASK_CNT_PER_ROUND))) {
     } else if (OB_FAIL(GCTX.sql_proxy_.read(res, sql.ptr()))) {
@@ -198,6 +199,7 @@ int ObAiColumnWorker::collect_tasks_(ObIAllocator &allocator, ObIArray<ObAiColum
 // the AI column, the AI expression and the normalized AI expression (which
 // is sent to the model as the system message).
 int ObAiColumnWorker::resolve_group_(ObIAllocator &allocator,
+                                      ObSchemaGetterGuard &schema_guard,
                                       ObIArray<ObAiColumnTask> &group,
                                       ObIArray<ObAiColumnTarget> &targets,
                                       ObString &db_name,
@@ -206,7 +208,6 @@ int ObAiColumnWorker::resolve_group_(ObIAllocator &allocator,
   int ret = OB_SUCCESS;
   const ObTableSchema *table_schema = NULL;
   const ObDatabaseSchema *db_schema = NULL;
-  ObSchemaGetterGuard schema_guard;
   if (group.count() <= 0) {
     ret = OB_INVALID_ARGUMENT;
   } else if (OB_FAIL(schema_guard.get_table_schema(group.at(0).table_id_, table_schema))) {
@@ -239,6 +240,7 @@ int ObAiColumnWorker::resolve_group_(ObIAllocator &allocator,
         target.column_name_ = column->get_column_name_str();
         target.expr_ = column->get_ai_column_expr();
         target.normalized_expr_ = column->get_ai_normalized_expr();
+        target.rowkey_predicate_ = task.rowkey_predicate_;
         target.data_type_ = column->get_data_type();
         if (target.normalized_expr_.empty()) {
           // the normalized expression is built from the AI expression and the
@@ -424,10 +426,13 @@ int ObAiColumnWorker::discard_group_(const ObIArray<ObAiColumnTask> &group)
 int ObAiColumnWorker::process_group_(ObIAllocator &allocator, ObIArray<ObAiColumnTask> &group)
 {
   int ret = OB_SUCCESS;
-  ObIArray<ObAiColumnTarget> targets;
+  ObSEArray<ObAiColumnTarget, MAX_GROUP_CNT> targets;
   ObString db_name;
   ObString table_name;
-  if (OB_FAIL(resolve_group_(allocator, group, targets, db_name, table_name))) {
+  // the schema guard is kept alive while the AI columns are filled, the
+  // names of the table and of the AI columns belong to the schema
+  ObSchemaGetterGuard schema_guard;
+  if (OB_FAIL(resolve_group_(allocator, schema_guard, group, targets, db_name, table_name))) {
     // the AI column does not exist anymore, the task is dropped
     LOG_WARN("failed to resolve the ai column of the task", K(ret));
     int tmp_ret = discard_group_(group);
@@ -477,7 +482,7 @@ int ObAiColumnWorker::process_group_(ObIAllocator &allocator, ObIArray<ObAiColum
 int ObAiColumnWorker::process_round_()
 {
   int ret = OB_SUCCESS;
-  ObArenaAllocator allocator(ObModIds::OB_AI_COLUMN_WORKER, OB_MALLOC_NORMAL_BLOCK_SIZE);
+  ObArenaAllocator allocator("AiColumnWorker", OB_MALLOC_NORMAL_BLOCK_SIZE);
   ObSEArray<ObAiColumnTask, MAX_TASK_CNT_PER_ROUND> tasks;
   if (OB_FAIL(collect_tasks_(allocator, tasks))) {
     LOG_WARN("failed to collect the tasks of the ai column queue", K(ret));

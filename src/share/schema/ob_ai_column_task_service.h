@@ -84,6 +84,28 @@ public:
    * Delete one task row by its id.
    */
   static int delete_task(common::ObISQLClient &sql_client, const int64_t task_id);
+
+  /**
+   * Delete the task rows of one row of a table.
+   *
+   * The row is identified by the primary key predicate which is stored in the
+   * task row, it is used when a row is deleted.
+   */
+  static int delete_tasks_by_rowkey(common::ObISQLClient &sql_client,
+                                     const int64_t table_id,
+                                     const common::ObString &rowkey_predicate);
+
+  /**
+   * Update the state of one task row.
+   *
+   * The worker uses it to mark a task as RETRY, the new state is committed in
+   * its own transaction, so that it is visible to the other sessions.
+   */
+  static int update_task_state(common::ObISQLClient &sql_client,
+                                const int64_t task_id,
+                                const int64_t state,
+                                const int64_t retry_count,
+                                const int64_t eligible_ts);
 };
 
 } // end namespace schema
