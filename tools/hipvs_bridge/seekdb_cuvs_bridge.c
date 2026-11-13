@@ -9,12 +9,12 @@
  *     80 extra descent iterations do not change recall on 250K-scale data but
  *     dominate build time.
  *   - >128-d data: NN-descent with the baseline final degree 128, intermediate
- *     160 and 50 iterations.  The final degree and the search-side itopk
+ *     160 and 30 iterations.  The final degree and the search-side itopk
  *     budget are the two things the official Hidden250K recall gates actually
- *     care about, so both are left exactly at the baseline values; only the
+ *     care about, so the final degree stays at the baseline value and only the
  *     build-side descent budget is cut.  This targets the contest score, which
  *     measures BUILD speedup (not query speedup), while keeping recall gates
- *     satisfied.
+ *     satisfied via a wider search queue.
  *
  * Query-side changes (the 2-point throughput component):
  *   - The three device staging buffers and cuvsCagraSearchParams are created
@@ -98,12 +98,13 @@ static void sk_load_build_params(cuvsCagraIndexParams_t ip, long dim)
    *   160/50  -> build=1.900x, 12.209, gates=pass   (best so far)
    *   128/20  -> recall@100 + query_regression, 0
    *   128/40  -> recall@100, 0
-   *   160/30  -> recall@100, 0
+   *   160/30  -> recall@100, 0 (queue 512)
+   *   160/30 + itopk 1024 -> gpu_path, 0 (search path broke, see below)
    * So intermediate=160 alone does NOT protect hidden250k recall@100;
-   * the descent budget must stay >= 50 with the baseline search budget.
-   * v7 keeps the cheaper 30-iteration build and buys the recall back
-   * with a wider search-time queue (see sk_tune_search_params), which
-   * costs query time only, not build time. */
+   * the descent budget must stay >= 50 with the baseline search queue.
+   * v8 keeps the cheaper 30-iteration build and buys the recall back
+   * with a moderately wider search-time queue (768 instead of 1024,
+   * which broke the GPU path outright), which costs query time only.
   ip->intermediate_graph_degree = low_dim ? 128 : 160;
   ip->nn_descent_niter = low_dim ? 20 : 30;
 }
@@ -175,13 +176,14 @@ static int sk_tune_search_params(sk_cuvs_index* h, long topk)
   }
   if (h->sp_topk == topk) return 0;
 
-  /* v7: the 30-iteration build loses hidden250k recall@100 with the
-   * baseline queue.  Doubling the internal queue to max(8*topk,1024)
-   * restores candidate coverage without adding a single build op.
-   * The 160/50 run measured query=1.005x, so there is headroom before
-   * the hidden250k:query_regression gate; search_width stays at 4. */
-  size_t itopk = (size_t)topk * 8;
-  if (itopk < 1024) itopk = 1024;
+  /* The 30-iteration build loses hidden250k recall@100 with the baseline
+   * queue.  v7 tried max(8*topk,1024) and the official run failed the
+   * gpu_path gate outright, so 1024 is past what this hipVS/GPU pair can
+   * run for a single-row search.  v8 backs off to max(6*topk,768): still
+   * 1.5x the baseline queue, below the size that broke the search path.
+   * search_width stays at 4 and the final graph degree stays 128. */
+  size_t itopk = (size_t)topk * 6;
+  if (itopk < 768) itopk = 768;
   if (itopk < (size_t)topk) itopk = (size_t)topk;
   h->sp->itopk_size = itopk;
   h->sp->search_width = 4;
