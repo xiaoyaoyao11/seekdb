@@ -17535,14 +17535,6 @@ NAME_OB '(' STRING_VALUE opt_file_table_arg_list ')'
 {
   malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $1, $3, $4, NULL);
 }
-| NAME_OB '(' STRING_VALUE opt_file_table_arg_list ')' relation_name
-{
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $1, $3, $4, $6);
-}
-| NAME_OB '(' STRING_VALUE opt_file_table_arg_list ')' AS relation_name
-{
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $1, $3, $4, $7);
-}
 ;
 
 opt_file_table_arg_list:
