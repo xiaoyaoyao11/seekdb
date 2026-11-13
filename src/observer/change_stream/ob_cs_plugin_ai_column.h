@@ -36,6 +36,24 @@
 
 namespace oceanbase
 {
+namespace common
+{
+class ObSqlString;
+}
+namespace memtable
+{
+struct ObRowData;
+}
+namespace blocksstable
+{
+class ObStorageDatum;
+}
+namespace schema
+{
+class ObTableSchema;
+class ObColumnSchemaV2;
+class ObColDesc;
+}
 namespace share
 {
 
@@ -52,6 +70,14 @@ private:
   int resolve_table_id_from_tablet_id_(const common::ObTabletID &tablet_id,
                                        uint64_t &table_id);
   int handle_table_(uint64_t table_id);
+  int handle_update_row_(uint64_t table_id, const ObCSRow &row);
+  int build_pk_condition_(const schema::ObTableSchema &table,
+                          const common::ObIArray<schema::ObColDesc> &col_descs,
+                          const memtable::ObRowData &row_data,
+                          common::ObSqlString &condition);
+  int build_pk_literal_(const schema::ObColumnSchemaV2 &column,
+                        const blocksstable::ObStorageDatum &datum,
+                        common::ObSqlString &condition);
 
   ObCSExecCtx &ctx_;
   schema::ObSchemaGetterGuard schema_guard_;

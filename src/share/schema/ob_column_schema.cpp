@@ -228,7 +228,14 @@ int ObColumnSchemaV2::set_ai_column_meta(const common::ObString &expr,
       if (expr.length() > 0) {
         MEMCPY(buf + head_len, expr.ptr(), expr.length());
       }
-      if (OB_FAIL(add_type_info(ObString(static_cast<int64_t>(head_len) + expr.length(), buf)))) {
+      // extended_type_info_ is already used by collection columns (VECTOR(...)),
+      // so the descriptor is only appended for scalar columns. VECTOR AI columns
+      // keep their expression in memory; persisting it needs a dedicated
+      // __all_column field (tracked as follow-up work).
+      if (is_collection()) {
+        ai_sync_mode_ = sync_mode;
+        ai_max_retries_ = max_retries;
+      } else if (OB_FAIL(add_type_info(ObString(static_cast<int64_t>(head_len) + expr.length(), buf)))) {
       } else {
         ai_sync_mode_ = sync_mode;
         ai_max_retries_ = max_retries;
