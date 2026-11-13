@@ -42,6 +42,7 @@
 #include "sql/resolver/ddl/ob_ddl_resolver.h"
 #include "sql/hybrid_search/ob_hybrid_search_executor.h"
 #include "sql/engine/basic/ob_file_scan_utils.h"
+#include "sql/engine/basic/ob_parquet_reader.h"
 
 namespace oceanbase
 {
@@ -4208,9 +4209,23 @@ int ObDMLResolver::resolve_file_table_item(const ParseNode &parse_tree, TableIte
         } else {
           row_cnt = scanner.row_count();
         }
+      } else if (OB_FILE_TABLE_PARQUET == func_type) {
+        options.format = file_scan::Format::PARQUET;
+        file_scan::ParquetScanner scanner;
+        if (file_scan::Status::OK != scanner.open(std::string(full_path.ptr(), full_path.length()),
+                                                 options, &error)) {
+          ret = OB_ERR_UNEXPECTED;
+          LOG_WARN("failed to open the parquet file", K(ret), K(full_path), K(error.message.c_str()));
+        } else if (file_scan::Status::OK != scanner.infer_schema(&schema, &error)) {
+          ret = OB_ERR_UNEXPECTED;
+          LOG_WARN("failed to infer the schema of the parquet file",
+                   K(ret), K(full_path), K(error.line), K(error.message.c_str()));
+        } else {
+          row_cnt = scanner.row_count();
+        }
       } else {
         ret = OB_NOT_SUPPORTED;
-        LOG_USER_ERROR(OB_NOT_SUPPORTED, "the parquet reader");
+        LOG_USER_ERROR(OB_NOT_SUPPORTED, "the file table functions");
       }
     }
   }

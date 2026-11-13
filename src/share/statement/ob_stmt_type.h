@@ -193,6 +193,15 @@ OB_STMT_TYPE_DEF_UNKNOWN_AT(T_SHOW_CHECK_TABLE, err_stmt_type_priv, 360)
 
 OB_STMT_TYPE_DEF_UNKNOWN_AT(T_DIFF_TABLE, get_dml_stmt_need_privs, 392)
 OB_STMT_TYPE_DEF_UNKNOWN_AT(T_MERGE_TABLE, get_merge_table_stmt_need_privs, 393)
+/* The DESCRIBE <select statement> of the file as database feature reports the
+ * columns of a select statement, it does not modify anything. */
+OB_STMT_TYPE_DEF_UNKNOWN_AT(T_DESCRIBE_SELECT_STMT, err_stmt_type_priv, 394)
+// 395 is reserved so that the identifiers of the concurrent additions of the
+// file as database feature cannot collide.
+/* The COPY statement of the file as database feature exports the result of a
+ * query or of a table into a CSV file, it reads the data of the sources and
+ * it does not modify the schema, therefore it needs no privilege. */
+OB_STMT_TYPE_DEF_UNKNOWN_AT(T_COPY_STMT, no_priv_needed, 396)
 
 OB_STMT_TYPE_DEF_UNKNOWN_AT(T_MAX, err_stmt_type_priv, 500)
 #endif

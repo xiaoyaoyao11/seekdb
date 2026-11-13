@@ -5489,7 +5489,22 @@ int ObStaticEngineCG::generate_spec(ObLogSelectInto &op, ObSelectIntoSpec &spec,
       spec.cs_type_ = op.get_cs_type();
       spec.parallel_ = op.get_parallel();
       spec.is_overwrite_ = op.get_is_overwrite();
+      spec.is_copy_ = op.get_is_copy();
+      spec.has_header_ = op.get_has_header();
       spec.plan_->need_drive_dml_query_ = true;
+    }
+    // the shape of the file that the COPY statement produces
+    if (OB_SUCC(ret) && spec.is_copy_) {
+      if (OB_FAIL(spec.column_names_.init(op.get_column_names().count()))) {
+      } else if (OB_FAIL(ob_write_string(alloc, op.get_null_string(), spec.null_string_))) {
+      } else {
+        for (int64_t i = 0; OB_SUCC(ret) && i < op.get_column_names().count(); ++i) {
+          common::ObString name;
+          if (OB_FAIL(ob_write_string(alloc, op.get_column_names().at(i), name))) {
+          } else if (OB_FAIL(spec.column_names_.push_back(name))) {
+          }
+        }
+      }
     }
   }
   return ret;

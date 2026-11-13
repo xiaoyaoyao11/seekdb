@@ -44,7 +44,11 @@ public:
         escaped_cht_(),
         cs_type_(CS_TYPE_INVALID),
         is_overwrite_(false),
-        external_properties_()
+        external_properties_(),
+        is_copy_(false),
+        has_header_(true),
+        null_string_(),
+        column_names_()
   {
   }
   virtual ~ObLogSelectInto() {}
@@ -108,6 +112,26 @@ public:
   {
     external_properties_.assign_ptr(external_properties.ptr(), external_properties.length());
   }
+  /**
+   * The setters below carry the shape of the file that the COPY statement of
+   * the "file as database" feature produces.
+   */
+  inline void set_is_copy(bool is_copy)
+  {
+    is_copy_ = is_copy;
+  }
+  inline void set_has_header(bool has_header)
+  {
+    has_header_ = has_header;
+  }
+  inline void set_null_string(const common::ObString &null_string)
+  {
+    null_string_.assign_ptr(null_string.ptr(), null_string.length());
+  }
+  inline void set_column_names(const common::ObIArray<common::ObString> &column_names)
+  {
+    column_names_.assign(column_names);
+  }
   inline ObItemType get_into_type() const
   {
     return into_type_;
@@ -164,6 +188,26 @@ public:
   {
     return external_properties_;
   }
+  inline bool get_is_copy() const
+  {
+    return is_copy_;
+  }
+  inline bool get_has_header() const
+  {
+    return has_header_;
+  }
+  inline common::ObString get_null_string() const
+  {
+    return null_string_;
+  }
+  inline const common::ObIArray<common::ObString> &get_column_names() const
+  {
+    return column_names_;
+  }
+  inline common::ObIArray<common::ObString> &get_column_names()
+  {
+    return column_names_;
+  }
   const common::ObIArray<ObRawExpr*> &get_select_exprs() const { return select_exprs_; }
   common::ObIArray<ObRawExpr*> &get_select_exprs() { return select_exprs_; }
   virtual int est_cost() override;
@@ -188,6 +232,10 @@ private:
   common::ObCollationType cs_type_;
   bool is_overwrite_;
   common::ObString external_properties_;
+  bool is_copy_;
+  bool has_header_;
+  common::ObString null_string_;
+  common::ObSEArray<common::ObString, 16, common::ModulePageAllocator, true> column_names_;
 };
 }
 }

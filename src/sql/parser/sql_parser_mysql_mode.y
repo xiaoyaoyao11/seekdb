@@ -40,18 +40,32 @@
 #include "../../../src/sql/parser/sql_parser_mysql_mode_lex.h"
 #include "../../../src/sql/parser/sql_parser_base.h"
 
+/* The explain_or_desc nonterminal carries the keyword that was used, 0 for
+ * EXPLAIN and 1 for DESCRIBE/DESC.  A DESCRIBE or DESC that is followed by a
+ * select statement describes the columns of that statement instead of
+ * explaining its plan, so it is turned into a T_DESCRIBE_SELECT_STMT node.
+ * The node is only built for a select statement, every other statement keeps
+ * the historical T_EXPLAIN behaviour. */
 #define GEN_EXPLAN_STMT(no_use, explain_stmt, explain_type, display_type, stmt, into_table, set_statement_id) \
-  (void)(no_use); \
   ParseNode *type_node = NULL; \
   ParseNode *display_node = NULL; \
+  bool is_describe_select_ = false; \
   if (0 != explain_type) { \
     malloc_terminal_node(type_node, result->malloc_pool_, explain_type); \
   } \
   if (0 != display_type) { \
     malloc_terminal_node(display_node, result->malloc_pool_, display_type); \
   } \
-  malloc_non_terminal_node(explain_stmt, result->malloc_pool_, T_EXPLAIN, 5, \
-                           type_node, display_node, into_table, set_statement_id, stmt);
+  if (NULL != (no_use) && 1 == (no_use)->value_ \
+      && NULL != (stmt) && T_SELECT == (stmt)->type_) { \
+    is_describe_select_ = true; \
+  } \
+  if (is_describe_select_) { \
+    malloc_non_terminal_node(explain_stmt, result->malloc_pool_, T_DESCRIBE_SELECT_STMT, 1, stmt); \
+  } else { \
+    malloc_non_terminal_node(explain_stmt, result->malloc_pool_, T_EXPLAIN, 5, \
+                             type_node, display_node, into_table, set_statement_id, stmt); \
+  }
 %}
 
 %destructor {destroy_tree($$);}<node>
@@ -500,6 +514,7 @@ END_P SET_VAR DELIMITER
 %type <node> vec_index_params vec_index_param vec_index_param_value opt_with_vector_index_parameters
 %type <node> json_table_expr unnest_expr mock_jt_on_error_on_empty jt_column_list json_table_column_def file_table_expr
 %type <node> file_table_arg_list file_table_arg file_table_named_arg
+%type <node> copy_stmt copy_options copy_option_list copy_option copy_option_value
 %type <node> json_table_ordinality_column_def json_table_exists_column_def json_table_value_column_def json_table_nested_column_def
 %type <node> opt_value_on_empty_or_error_or_mismatch opt_on_mismatch
 %type <node> table_values_clause table_values_clause_with_order_by_and_limit values_row_list row_value
@@ -588,6 +603,7 @@ stmt:
   | alter_outline_stmt      { $$ = $1; question_mark_issue($$, result); }
   | drop_outline_stmt       { $$ = $1; check_question_mark($$, result); }
   | show_stmt               { $$ = $1; check_question_mark($$, result); }
+  | copy_stmt               { $$ = $1; question_mark_issue($$, result); }
   | prepare_stmt            { $$ = $1; question_mark_issue($$, result); }
   | variable_set_stmt       { $$ = $1; question_mark_issue($$, result); }
   | execute_stmt            { $$ = $1; check_question_mark($$, result); }
@@ -12310,10 +12326,26 @@ explain_or_desc relation_factor opt_desc_column_option
 }
 ;
 
+/* The node records the keyword that was used, 0 for EXPLAIN and 1 for
+ * DESCRIBE/DESC.  Only the action of the rule is changed, the set of the
+ * tokens that may follow the rule is not touched, so the rule does not
+ * introduce any new shift/reduce or reduce/reduce conflict. */
 explain_or_desc:
-EXPLAIN {$$ = NULL;}
-| DESCRIBE {$$ = NULL;}
-| DESC  {$$ = NULL;}
+EXPLAIN
+{
+  malloc_terminal_node($$, result->malloc_pool_, T_INT);
+  $$->value_ = 0;
+}
+| DESCRIBE
+{
+  malloc_terminal_node($$, result->malloc_pool_, T_INT);
+  $$->value_ = 1;
+}
+| DESC
+{
+  malloc_terminal_node($$, result->malloc_pool_, T_INT);
+  $$->value_ = 1;
+}
 ;
 
 explainable_stmt:
@@ -17610,6 +17642,134 @@ NAME_OB '=' simple_expr
 {
   ParseNode *name_node = $1;
   malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_NAMED_ARG, 3, name_node, $3, NULL);
+}
+;
+
+/**
+ * The COPY statement of the "file as database" feature exports the result of
+ * a query or of a table into a CSV file.
+ *
+ * The grammar is deliberately kept apart from the grammar of the INTO
+ * OUTFILE clause of the SELECT statement: the two statements have a
+ * different shape and mixing them would only create parser conflicts.
+ *
+ * The child of the T_COPY_STMT node is
+ *   0: the parse tree of the query,
+ *   1: the name of the file,
+ *   2: the list of the options.
+ * The child of the T_COPY_OPTIONS node is the list of the T_COPY_OPTION
+ * nodes, every T_COPY_OPTION node has the name of the option in its first
+ * child and the value of the option in its second child.
+ */
+copy_stmt:
+COPY '(' select_no_parens ')' TO STRING_VALUE copy_options
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_STMT, 3, $3, $6, $7);
+}
+| COPY dml_table_name TO STRING_VALUE copy_options
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_STMT, 3, $2, $4, $5);
+}
+;
+
+copy_options:
+'(' copy_option_list ')'
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_OPTIONS, 1, $2);
+}
+;
+
+/**
+ * The list of the options of a COPY statement.  The options are separated
+ * by commas, the separator is optional so that both
+ *   (format csv, header)
+ * and
+ *   (format csv header)
+ * are accepted.
+ *
+ * The separator is an empty production instead of a second list rule on
+ * purpose.  A rule "copy_option_list copy_option" would make the parser
+ * face a shift / reduce conflict: the parser could not tell whether the
+ * NAME_OB that follows a list starts a new option of the list or belongs
+ * to a copy_option that is reduced in another way.  The opt_comma
+ * production is unambiguous, the only action of the parser in that state
+ * is to shift the name of the next option.
+ */
+copy_option_list:
+copy_option
+{
+  malloc_list_node($$, result->malloc_pool_, T_EXPR_LIST, 2, 1, $1);
+}
+| copy_option_list opt_comma copy_option
+{
+  push_back_list(result->malloc_pool_, result, $$, $1, $3);
+}
+;
+
+/**
+ * A single option of a COPY statement.
+ *
+ * The name of the option is either an identifier (header, delimiter, sep,
+ * quote, nullstr) or one of the few keywords that the option list uses
+ * (escape, format).
+ *
+ * The value of an option is either a string constant, a boolean literal or
+ * an integer.  An option may also stand alone, the option "header" then
+ * means the same as the option "header true".
+ *
+ * The identifier is deliberately not a value of an option: the option
+ * "format csv" names its value with the format keyword and the option
+ * "header" may stand alone, so an identifier after the name of an option
+ * always starts the next option.  That keeps the grammar unambiguous.
+ */
+copy_option:
+NAME_OB copy_option_value
+{
+  ParseNode *name_node = $1;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_OPTION, 2, name_node, $2);
+}
+| NAME_OB
+{
+  ParseNode *name_node = $1;
+  ParseNode *value_node = NULL;
+  malloc_terminal_node(value_node, result->malloc_pool_, T_BOOL);
+  value_node->value_ = 1;
+  value_node->is_hidden_const_ = 1;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_OPTION, 2, name_node, value_node);
+}
+| ESCAPE copy_option_value
+{
+  ParseNode *name_node = NULL;
+  make_name_node(name_node, result->malloc_pool_, "escape");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_OPTION, 2, name_node, $2);
+}
+| FORMAT copy_option_value
+{
+  ParseNode *name_node = NULL;
+  make_name_node(name_node, result->malloc_pool_, "format");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_OPTION, 2, name_node, $2);
+}
+| FORMAT NAME_OB
+{
+  ParseNode *name_node = NULL;
+  make_name_node(name_node, result->malloc_pool_, "format");
+  ParseNode *value_node = $2;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_OPTION, 2, name_node, value_node);
+}
+;
+
+copy_option_value:
+STRING_VALUE
+{
+  $$ = $1;
+}
+| BOOL_VALUE
+{
+  $$ = $1;
+}
+| INTNUM
+{
+  $$ = $1;
 }
 ;
 hybrid_search_expr:

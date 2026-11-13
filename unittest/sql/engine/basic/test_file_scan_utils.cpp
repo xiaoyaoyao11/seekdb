@@ -26,6 +26,7 @@
 
 #include <gtest/gtest.h>
 #include "sql/engine/basic/ob_file_scan_utils.h"
+#include "sql/engine/basic/ob_parquet_reader.h"
 
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -356,6 +357,35 @@ TEST_F(FileScanTest, missing_file_is_reported)
   Error error;
   EXPECT_NE(Status::OK, scanner.open(path("does_not_exist.csv"), options, &error));
   EXPECT_EQ(Status::NOT_FOUND, error.status);
+}
+
+TEST_F(FileScanTest, a_file_that_is_not_a_parquet_file_is_reported)
+{
+  // The parquet reader reports a file that does not carry the magic number
+  // of the format, the message names the reason.
+  write_file("not_parquet.txt", "this is not a parquet file at all\n");
+  ReadOptions options;
+  options.format = Format::PARQUET;
+  ParquetScanner scanner;
+  Error error;
+  EXPECT_EQ(Status::PARSE_ERROR, scanner.open(path("not_parquet.txt"), options, &error));
+  EXPECT_NE(std::string::npos, error.message.find("not a parquet file"));
+
+  // A file that does not exist is reported as well.
+  ParquetScanner missing;
+  Error missing_error;
+  EXPECT_EQ(Status::NOT_FOUND, missing.open(path("does_not_exist.parquet"), options,
+                                            &missing_error));
+}
+
+TEST_F(FileScanTest, the_formats_are_parsed)
+{
+  Format format = Format::AUTO;
+  EXPECT_TRUE(parse_format("parquet", &format));
+  EXPECT_EQ(Format::PARQUET, format);
+  EXPECT_TRUE(parse_format("PARQUET", &format));
+  EXPECT_EQ(Format::PARQUET, format);
+  EXPECT_FALSE(parse_format("orc", &format));
 }
 
 } // namespace

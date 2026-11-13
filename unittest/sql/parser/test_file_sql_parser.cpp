@@ -61,6 +61,26 @@ protected:
     parser.free_result(parse_result);
     return OB_SUCCESS == ret;
   }
+
+  /// Parse a statement and report the type of the node of the statement.
+  static ObItemType statement_type(const char *sql)
+  {
+    ObArenaAllocator allocator;
+    ObSQLMode sql_mode = 0;
+    ObParser parser(allocator, sql_mode);
+    ParseResult parse_result;
+    common::ObString statement(sql);
+    ObItemType type = T_INVALID;
+    if (OB_SUCCESS == parser.parse_sql(statement, parse_result, false)
+        && NULL != parse_result.result_tree_
+        && NULL != parse_result.result_tree_->children_
+        && 1 == parse_result.result_tree_->num_child_
+        && NULL != parse_result.result_tree_->children_[0]) {
+      type = parse_result.result_tree_->children_[0]->type_;
+    }
+    parser.free_result(parse_result);
+    return type;
+  }
 };
 
 TEST_F(TestFileSqlParser, read_csv)
@@ -118,6 +138,58 @@ TEST_F(TestFileSqlParser, broken_statements_are_rejected)
   EXPECT_FALSE(accept("select * from read_csv("));
   EXPECT_FALSE(accept("select * from read_csv()"));
   EXPECT_FALSE(accept("select * from read_csv('/tmp/a.csv' read_csv('/tmp/b.csv')"));
+}
+
+/**
+ * The DuckDB style DESCRIBE of a select statement.
+ *
+ * The statement describes the columns of the select statement, it is not the
+ * explanation of its plan.
+ */
+TEST_F(TestFileSqlParser, describe_select)
+{
+  EXPECT_TRUE(accept("describe select * from read_csv('/tmp/data.csv')"));
+  EXPECT_TRUE(accept("desc select * from read_csv('/tmp/data.csv')"));
+  EXPECT_TRUE(accept("describe select id, name from read_csv('/tmp/data.csv') f"));
+  EXPECT_TRUE(accept("describe select * from t1"));
+  EXPECT_TRUE(accept("describe (select * from t1)"));
+  EXPECT_TRUE(accept("describe with c as (select 1 from dual) select * from c"));
+}
+
+TEST_F(TestFileSqlParser, describe_select_has_its_own_node_type)
+{
+  EXPECT_EQ(T_DESCRIBE_SELECT_STMT, statement_type("describe select * from t1"));
+  EXPECT_EQ(T_DESCRIBE_SELECT_STMT, statement_type("desc select * from t1"));
+  EXPECT_EQ(T_DESCRIBE_SELECT_STMT, statement_type("DESCRIBE select 1 from dual"));
+}
+
+/**
+ * The ordinary statements of the EXPLAIN family are not affected.
+ */
+TEST_F(TestFileSqlParser, explain_is_not_affected)
+{
+  EXPECT_EQ(T_EXPLAIN, statement_type("explain select * from t1"));
+  EXPECT_EQ(T_EXPLAIN, statement_type("explain select * from read_csv('/tmp/a.csv')"));
+  EXPECT_EQ(T_EXPLAIN, statement_type("explain delete from t1"));
+  EXPECT_EQ(T_EXPLAIN, statement_type("explain insert into t1 values (1)"));
+  EXPECT_EQ(T_EXPLAIN, statement_type("explain update t1 set c1 = 1"));
+  // a describe of a statement that is not a select statement still explains it
+  EXPECT_EQ(T_EXPLAIN, statement_type("describe delete from t1"));
+  EXPECT_EQ(T_EXPLAIN, statement_type("describe insert into t1 values (1)"));
+  EXPECT_EQ(T_EXPLAIN, statement_type("describe update t1 set c1 = 1"));
+}
+
+/**
+ * The ordinary DESCRIBE of a relation is not affected, it still shows the
+ * columns of the relation.
+ */
+TEST_F(TestFileSqlParser, describe_relation_is_not_affected)
+{
+  EXPECT_EQ(T_SHOW_COLUMNS, statement_type("describe t1"));
+  EXPECT_EQ(T_SHOW_COLUMNS, statement_type("desc t1"));
+  EXPECT_EQ(T_SHOW_COLUMNS, statement_type("describe db1.t1"));
+  EXPECT_TRUE(accept("describe t1"));
+  EXPECT_TRUE(accept("desc t1"));
 }
 
 } // namespace

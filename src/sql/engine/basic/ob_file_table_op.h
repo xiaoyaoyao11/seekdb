@@ -19,6 +19,7 @@
 
 #include "sql/engine/ob_operator.h"
 #include "sql/engine/basic/ob_file_scan_utils.h"
+#include "sql/engine/basic/ob_parquet_reader.h"
 
 namespace oceanbase
 {
@@ -75,6 +76,7 @@ public:
     : ObOperator(exec_ctx, spec, input),
       csv_scanner_(),
       jsonl_scanner_(),
+      parquet_scanner_(),
       fields_(),
       nulls_(),
       glob_files_(),
@@ -101,6 +103,7 @@ private:
 private:
   file_scan::CsvScanner csv_scanner_;
   file_scan::JsonlScanner jsonl_scanner_;
+  file_scan::ParquetScanner parquet_scanner_;
   /* the values of the record that is currently being produced */
   std::vector<std::string> fields_;
   std::vector<char> nulls_;

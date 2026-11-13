@@ -202,8 +202,16 @@ int ObFileTableOp::open_source()
       LOG_WARN("failed to open the json file", K(path.c_str()), K(error.message.c_str()));
       ret = OB_ERR_UNEXPECTED;
     }
+  } else if (FILE_READER_PARQUET == MY_SPEC.func_type_) {
+    file_scan::ReadOptions options;
+    options.format = file_scan::Format::PARQUET;
+    options.header = true;
+    options.sample_size = MY_SPEC.sample_size_;
+    if (file_scan::Status::OK != parquet_scanner_.open(path, options, &error)) {
+      LOG_WARN("failed to open the parquet file", K(path.c_str()), K(error.message.c_str()));
+      ret = OB_ERR_UNEXPECTED;
+    }
   } else {
-    // the parquet reader is not implemented by this operator yet
     LOG_WARN("unsupported file reader", K(MY_SPEC.func_type_), K(path.c_str()));
     ret = OB_NOT_SUPPORTED;
   }
@@ -215,6 +223,7 @@ int ObFileTableOp::close_source()
   int ret = OB_SUCCESS;
   csv_scanner_.close();
   jsonl_scanner_.close();
+  parquet_scanner_.close();
   glob_files_.clear();
   glob_idx_ = 0;
   fields_.clear();
@@ -238,6 +247,11 @@ int ObFileTableOp::inner_rescan()
   } else if (FILE_READER_JSON == MY_SPEC.func_type_ || FILE_READER_NDJSON == MY_SPEC.func_type_) {
     if (file_scan::Status::OK != jsonl_scanner_.rewind(&error)) {
       LOG_WARN("failed to rewind the json file", K(error.message.c_str()));
+      ret = OB_ERR_UNEXPECTED;
+    }
+  } else if (FILE_READER_PARQUET == MY_SPEC.func_type_) {
+    if (file_scan::Status::OK != parquet_scanner_.rewind(&error)) {
+      LOG_WARN("failed to rewind the parquet file", K(error.message.c_str()));
       ret = OB_ERR_UNEXPECTED;
     }
   }
@@ -286,7 +300,7 @@ int ObFileTableOp::next_record(bool &has_row)
     } else {
       has_row = true;
     }
-  } else {
+  } else if (FILE_READER_JSON == MY_SPEC.func_type_ || FILE_READER_NDJSON == MY_SPEC.func_type_) {
     if (!jsonl_scanner_.next_row(&fields_, &nulls_, &error)) {
       if (!error.ok()) {
         LOG_WARN("failed to read the json record",
@@ -296,6 +310,19 @@ int ObFileTableOp::next_record(bool &has_row)
     } else {
       has_row = true;
     }
+  } else if (FILE_READER_PARQUET == MY_SPEC.func_type_) {
+    if (!parquet_scanner_.next_row(&fields_, &nulls_, &error)) {
+      if (!error.ok()) {
+        LOG_WARN("failed to read the parquet record",
+                 K(static_cast<int32_t>(error.status)), K(error.line), K(error.message.c_str()));
+        ret = OB_ERR_UNEXPECTED;
+      }
+    } else {
+      has_row = true;
+    }
+  } else {
+    ret = OB_NOT_SUPPORTED;
+    LOG_WARN("unsupported file reader", K(MY_SPEC.func_type_));
   }
   return ret;
 }

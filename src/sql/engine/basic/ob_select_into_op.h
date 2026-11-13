@@ -22,6 +22,7 @@
 #include "sql/engine/cmd/ob_load_data_parser.h"
 #include "sql/engine/basic/ob_select_into_basic.h"
 #include "sql/engine/basic/ob_external_file_writer.h"
+#include "sql/engine/basic/ob_file_copy_writer.h"
 #include "sql/resolver/dml/ob_select_stmt.h"
 
 namespace oceanbase
@@ -71,7 +72,11 @@ public:
       parallel_(1),
       buffer_size_(DEFAULT_BUFFER_SIZE),
       is_overwrite_(false),
-      external_properties_(alloc)
+      external_properties_(alloc),
+      is_copy_(false),
+      has_header_(true),
+      null_string_(),
+      column_names_(alloc)
   {
   }
 
@@ -91,6 +96,15 @@ public:
   int64_t buffer_size_;
   bool is_overwrite_;
   ObExternalFileFormat::StringData external_properties_;
+  /**
+   * The fields below carry the shape of the file that the COPY statement of
+   * the "file as database" feature produces.  They are only meaningful when
+   * is_copy_ is true.
+   */
+  bool is_copy_;
+  bool has_header_;
+  common::ObString null_string_;
+  common::ObFixedArray<common::ObString, common::ObIAllocator> column_names_;
   static const int64_t DEFAULT_MAX_FILE_SIZE = 256LL * 1024 * 1024;
   static const int64_t DEFAULT_BUFFER_SIZE = 1LL * 1024 * 1024;
 };
@@ -126,7 +140,11 @@ public:
       external_properties_(),
       format_type_(ObExternalFileFormat::FormatType::CSV_FORMAT),
       block_id_(0),
-      need_commit_(true)
+      need_commit_(true),
+      copy_writer_(),
+      is_copy_(false),
+      is_copy_header_written_(false),
+      is_copy_failed_(false)
   {
   }
 
@@ -256,6 +274,16 @@ private:
   int create_the_only_data_writer(ObExternalFileWriter *&data_writer);
   int new_data_writer(ObExternalFileWriter *&data_writer);
   int check_secure_file_path(ObString file_name);
+  /**
+   * The methods below implement the COPY statement of the "file as database"
+   * feature, they are only used when the statement is a COPY statement.
+   */
+  int init_copy_writer();
+  int write_copy_header();
+  int write_copy_row();
+  int close_copy_writer();
+  /// Convert the value of a column into the text that the file holds.
+  int get_copy_field_text(const ObExpr *expr, ObDatum *datum, ObObj *obj, std::string *text);
   char *get_json_buf() { return json_buf_; }
   int64_t get_json_buf_len() { return json_buf_len_; }
   char *get_shared_buf() { return shared_buf_; }
@@ -292,6 +320,24 @@ private:
   ObExternalFileFormat::FormatType format_type_;
   uint32_t block_id_;
   bool need_commit_;
+  /**
+   * The writer of the COPY statement, it is only used when the statement is
+   * a COPY statement.  The writer produces a file that the read_csv() table
+   * function of the same feature can read back.
+   */
+  file_scan::CopyWriter copy_writer_;
+  bool is_copy_;
+  /**
+   * True when the header of the file of a COPY statement was written, the
+   * header is written before the first row of the file.
+   */
+  bool is_copy_header_written_;
+  /**
+   * True when the export of a COPY statement failed.  The half written file
+   * is removed in that case, so that a failed export never leaves a
+   * truncated file behind.
+   */
+  bool is_copy_failed_;
   static const int64_t SHARED_BUFFER_SIZE = 2LL * 1024 * 1024;
 
 };
