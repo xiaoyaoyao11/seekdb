@@ -46,6 +46,13 @@
 
 namespace oceanbase
 {
+namespace share
+{
+namespace schema
+{
+class ObSchemaGetterGuard;
+}
+}
 namespace observer
 {
 
@@ -97,6 +104,7 @@ struct ObAiColumnTarget
   common::ObString column_name_;
   common::ObString expr_;
   common::ObString normalized_expr_;
+  common::ObString rowkey_predicate_;
   common::ObObjType data_type_;
 
   ObAiColumnTarget()
@@ -106,6 +114,7 @@ struct ObAiColumnTarget
         column_name_(),
         expr_(),
         normalized_expr_(),
+        rowkey_predicate_(),
         data_type_(common::ObMaxType)
   {}
 
@@ -130,6 +139,7 @@ private:
   int collect_tasks_(common::ObIAllocator &allocator, common::ObIArray<ObAiColumnTask> &tasks);
   int process_group_(common::ObIAllocator &allocator, common::ObIArray<ObAiColumnTask> &group);
   int resolve_group_(common::ObIAllocator &allocator,
+                     share::schema::ObSchemaGetterGuard &schema_guard,
                      common::ObIArray<ObAiColumnTask> &group,
                      common::ObIArray<ObAiColumnTarget> &targets,
                      common::ObString &db_name,

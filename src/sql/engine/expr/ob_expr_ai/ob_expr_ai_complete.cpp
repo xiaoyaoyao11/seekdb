@@ -160,8 +160,8 @@ int ObExprAIComplete::eval_ai_complete(const ObExpr &expr,
       // answer of the model must have.  Without such a context the AI
       // function is used as it is: the prompt is the only message of the
       // request and the answer is a string.
-      ObString system_prompt = share::schema::ObAiColumnEvalCtx::get_system_prompt();
-      ObObjType target_type = share::schema::ObAiColumnEvalCtx::get_target_type();
+      ObString system_prompt = ::oceanbase::share::schema::ObAiColumnEvalCtx::get_system_prompt();
+      ObObjType target_type = ::oceanbase::share::schema::ObAiColumnEvalCtx::get_target_type();
       if (OB_FAIL(model.call_completion_with_system_prompt(system_prompt, prompt, config, result))) {
       } else if (OB_FAIL(ObAIFuncUtils::convert_ai_result_to_target_type(
                            temp_allocator, target_type, result, converted))) {
