@@ -18,6 +18,7 @@
 #define OB_DAS_IR_DEFINE_H_
 
 #include "data_plane/blocksstable/ob_index_block_util.h"
+#include "data_plane/access/ob_tablet_scan.h"
 #include "query/das/ob_das_id_protocol.h"
 #include "ob_das_attach_define.h"
 
@@ -255,6 +256,20 @@ public:
   // fts_idx_ is dynamically generated during execution based on the rtdef tree and does not need to be serialized.
   int64_t fts_idx_;
   int64_t minimum_should_match_;
+
+  // 仅供全文索引检索迭代器（retrieval iter）提前结束使用的限额。
+  //
+  // 普通全文检索路径下，ir_rtdef->get_inv_idx_scan_rtdef() 与主 scan rtdef 其实是同一个
+  // 对象，而该对象的 limit_param_ 会被 DAS 层复制成 storage 的扫描参数（见
+  // ObDASLegacyTRMergeIter / ObDASScanOp），storage 会用它去截断倒排 posting list 的扫描
+  // 行数 —— 那会把每个词的倒排链一起截短，导致命中数不足，属于语义错误。
+  //
+  // 因此这里单独开一条只给检索层用的通道，与 storage 扫描参数彻底分开：检索层的 DAAT
+  // 迭代器按这个限额提前结束，而 storage 侧仍然扫描完整的倒排链。
+  //
+  // 与 fts_idx_ / minimum_should_match_ 一样属于运行期字段，不参与序列化
+  // （OB_SERIALIZE_MEMBER(ObDASIRScanRtDef) 不带成员列表），由每个执行节点在本地设置。
+  common::ObLimitParam retrieval_limit_param_;
 };
 
 struct ObDASIRAuxLookupCtDef : ObDASAttachCtDef

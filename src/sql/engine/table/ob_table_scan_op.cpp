@@ -23,6 +23,7 @@
 #include "data_plane/blocksstable/ob_datum_row.h"
 #include "sql/engine/ob_physical_plan.h"
 #include "sql/das/ob_das_attach_define.h"
+#include "sql/das/ob_das_ir_define.h"
 #include "sql/das/ob_das_vec_define.h"
 #include "share/geo/ob_geo_utils.h"
 #include "share/ob_ddl_checksum.h"
@@ -800,6 +801,42 @@ int ObTableScanOp::prepare_pushdown_limit_param()
   int ret = OB_SUCCESS;
   if (!limit_param_.is_valid()) {
     //ignore, do nothing
+  } else if (!MY_SPEC.batch_scan_flag_
+             && nullptr != tsc_rtdef_.attach_rtinfo_
+             && nullptr != tsc_rtdef_.attach_rtinfo_->attach_rtdef_
+             && DAS_OP_IR_SCAN == tsc_rtdef_.attach_rtinfo_->attach_rtdef_->op_type_
+             && nullptr != MY_CTDEF.attach_spec_.attach_ctdef_
+             && DAS_OP_IR_SCAN == MY_CTDEF.attach_spec_.attach_ctdef_->op_type_
+             // IR scan 上带检索文本才是真正的全文检索；func lookup / es match 复用
+             // IR scan 但没有检索文本，这里排除掉。
+             && nullptr != static_cast<const ObDASIRScanCtDef *>(
+                             MY_CTDEF.attach_spec_.attach_ctdef_)->search_text_) {
+    // 全文索引检索：limit 只下推到检索层（retrieval iter），不下推到 storage。
+    //
+    // 检索层的 DAAT 迭代器本身就支持按 limit 提前结束（ObSRDaaTIterImpl::get_next_rows
+    // 在 output_row_cnt_ 达到 limit 时返回 OB_ITER_END），而 output_row_cnt_ 只统计通过了
+    // match filter 的行，所以提前结束不改变最终返回的行集合，只是省掉了剩余的倒排扫描
+    // 与相关度计算。
+    //
+    // 注意这里不能把 limit 写回 tsc_rtdef_.scan_rtdef_.limit_param_：普通全文检索路径下
+    // 该对象与 ir_rtdef->get_inv_idx_scan_rtdef() 是同一个，DAS 层会把它复制成 storage 的
+    // 扫描参数，storage 会用它截断倒排 posting list，导致命中数不足（语义错误）。
+    // 因此走独立的 retrieval_limit_param_ 通道。
+    need_final_limit_ = true;
+    ObDASIRScanRtDef *ir_rtdef =
+        static_cast<ObDASIRScanRtDef *>(tsc_rtdef_.attach_rtinfo_->attach_rtdef_);
+    // 检索层需要产出 offset+limit 行，TSC 层随后再跳过 offset 行
+    // （见 inner_get_next_row 中 need_final_limit_ 的处理），否则 offset 会被扣减两次。
+    ir_rtdef->retrieval_limit_param_.offset_ = 0;
+    ir_rtdef->retrieval_limit_param_.limit_ = limit_param_.limit_ + limit_param_.offset_;
+    tsc_rtdef_.scan_rtdef_.limit_param_.offset_ = 0;
+    tsc_rtdef_.scan_rtdef_.limit_param_.limit_ = -1;
+
+    if (nullptr != MY_CTDEF.lookup_ctdef_) {
+      OB_ASSERT(nullptr != tsc_rtdef_.lookup_rtdef_);
+      tsc_rtdef_.lookup_rtdef_->limit_param_.offset_ = 0;
+      tsc_rtdef_.lookup_rtdef_->limit_param_.limit_  = -1;
+    }
   } else if (MY_SPEC.batch_scan_flag_ || nullptr != tsc_rtdef_.attach_rtinfo_) {
     //batch scan can not pushdown limit param to storage
     // do final limit for TSC op with attached ops for now
