@@ -11316,7 +11316,8 @@ int ObDMLResolver::resolve_values_table_for_insert(const ParseNode &table_node,
             } else if (OB_FAIL(resolve_sql_expr(*value_node, expr))) {
             } else if (OB_ISNULL(expr) || OB_ISNULL(table_info.values_desc_.at(j))) {
               ret = OB_ERR_UNEXPECTED;
-            } else if (table_info.values_desc_.at(j)->is_generated_column() &&
+            } else if ((table_info.values_desc_.at(j)->is_generated_column()
+                        || table_info.values_desc_.at(j)->is_ai_column()) &&
                        expr->get_expr_type() != T_DEFAULT) {
               ret = OB_NON_DEFAULT_VALUE_FOR_GENERATED_COLUMN;
               ColumnItem *orig_col_item = NULL;
