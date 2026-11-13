@@ -235,7 +235,7 @@ int ObCopyResolver::resolve_file_path(const ParseNode *path_node)
   int ret = OB_SUCCESS;
   ObString path_str;
   ObString secure_file_priv;
-  if (OB_ISNULL(path_node) || T_STRING != path_node->type_) {
+  if (OB_ISNULL(path_node) || T_VARCHAR != path_node->type_) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("the copy statement has no target file");
   } else if (OB_FAIL(resolve_str_const(*path_node, path_str))) {
@@ -274,9 +274,9 @@ int ObCopyResolver::build_select_into_item()
     into_item_->outfile_name_.set_collation_type(ObCharset::get_system_collation());
     // the file is a csv file, the field terminator is the delimiter and the
     // line terminator is the line feed
-    into_item_->field_str_.set_varchar(std::string(1, copy_options_.delimiter_));
+    into_item_->field_str_.set_varchar(ObString((char *)&copy_options_.delimiter_, 1));
     into_item_->field_str_.set_collation_type(ObCharset::get_system_collation());
-    into_item_->line_str_.set_varchar(std::string(1, '\n'));
+    into_item_->line_str_.set_varchar(DEFAULT_LINE_TERM_STR);
     into_item_->line_str_.set_collation_type(ObCharset::get_system_collation());
     // the values of the file are not escaped by the machinery of the
     // SELECT ... INTO OUTFILE, the writer of the COPY statement does the
