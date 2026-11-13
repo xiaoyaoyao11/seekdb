@@ -38,7 +38,7 @@ OB_SERIALIZE_MEMBER(ObSelectIntoOpInput, task_id_, sqc_id_);
 OB_SERIALIZE_MEMBER((ObSelectIntoSpec, ObOpSpec), into_type_, user_vars_, outfile_name_,
     field_str_, line_str_, closed_cht_, is_optional_, select_exprs_, is_single_, max_file_size_,
     escaped_cht_, cs_type_, parallel_, buffer_size_, is_overwrite_,
-    external_properties_);
+    external_properties_, has_header_, null_str_, is_copy_to_file_, column_names_);
 
 
 int ObSelectIntoOp::inner_open()
@@ -182,6 +182,7 @@ int ObSelectIntoOp::calc_outfile_path()
   } else if (OB_FAIL(ob_write_string(ctx_.get_allocator(), path, basic_url_, true))) {
   }
   if (OB_SUCC(ret) && (T_INTO_OUTFILE == into_type || T_INTO_DUMPFILE == into_type)
+      && !MY_SPEC.is_copy_to_file_
       && OB_FAIL(check_secure_file_path(basic_url_))) {
   }
   return ret;
@@ -917,6 +918,30 @@ int ObSelectIntoOp::print_lob_field(const ObObj &obj,
   return ret;
 }
 
+int ObSelectIntoOp::write_csv_header(ObCsvFileWriter &data_writer)
+{
+  int ret = OB_SUCCESS;
+  if (!header_written_) {
+    const ObIArray<ObString> &names = MY_SPEC.column_names_;
+    if (MY_SPEC.has_header_) {
+      for (int64_t i = 0; OB_SUCC(ret) && i < names.count(); ++i) {
+        ObObj obj;
+        obj.set_varchar(names.at(i));
+        obj.set_collation_type(cs_type_);
+        OZ(print_field(obj, data_writer));
+        if (OB_SUCC(ret) && i != names.count() - 1) {
+          OZ(write_obj_to_file(field_str_, data_writer));
+        }
+      }
+      if (OB_SUCC(ret)) {
+        OZ(write_obj_to_file(line_str_, data_writer));
+      }
+    }
+    header_written_ = true;
+  }
+  return ret;
+}
+
 int ObSelectIntoOp::print_field(const ObObj &obj, ObCsvFileWriter &data_writer)
 {
   int ret = OB_SUCCESS;
@@ -952,6 +977,7 @@ int ObSelectIntoOp::into_outfile(ObExternalFileWriter *data_writer)
   ObCsvFileWriter *csv_data_writer = NULL;
   if (OB_ISNULL(csv_data_writer = static_cast<ObCsvFileWriter *>(data_writer))) {
     ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(write_csv_header(*csv_data_writer))) {
   }
   for (int64_t i = 0; OB_SUCC(ret) && i < select_exprs.count(); ++i) {
     if (OB_ISNULL(select_exprs.at(i))) {
@@ -962,6 +988,11 @@ int ObSelectIntoOp::into_outfile(ObExternalFileWriter *data_writer)
     } else if (OB_FAIL(datum->to_obj(obj,
                                      select_exprs.at(i)->obj_meta_,
                                      select_exprs.at(i)->obj_datum_map_))) {
+    } else if (obj.is_null() && !MY_SPEC.null_str_.empty()) {
+      ObObj null_obj;
+      null_obj.set_varchar(MY_SPEC.null_str_);
+      null_obj.set_collation_type(cs_type_);
+      OZ(print_field(null_obj, *csv_data_writer));
     } else if (!ob_is_text_tc(select_exprs.at(i)->obj_meta_.get_type()) || obj.is_null()) {
       OZ(print_field(obj, *csv_data_writer));
     } else { // text tc
@@ -1006,6 +1037,7 @@ int ObSelectIntoOp::into_outfile_batch_csv(const ObBatchRows &brs, ObExternalFil
                && OB_FAIL(csv_data_writer->init_compress_writer(ctx_.get_allocator(),
                                                                 external_properties_.csv_format_.compression_algorithm_,
                                                                 MY_SPEC.buffer_size_))) {
+    } else if (OB_FAIL(write_csv_header(*csv_data_writer))) {
     } else {
       for (int64_t col_idx = 0; OB_SUCC(ret) && col_idx < select_exprs.count(); ++col_idx) {
         if (OB_ISNULL(datum = datum_vectors.at(col_idx).at(i))) {
@@ -1013,6 +1045,11 @@ int ObSelectIntoOp::into_outfile_batch_csv(const ObBatchRows &brs, ObExternalFil
         } else if (OB_FAIL(datum->to_obj(obj,
                                          select_exprs.at(col_idx)->obj_meta_,
                                          select_exprs.at(col_idx)->obj_datum_map_))) {
+        } else if (obj.is_null() && !MY_SPEC.null_str_.empty()) {
+          ObObj null_obj;
+          null_obj.set_varchar(MY_SPEC.null_str_);
+          null_obj.set_collation_type(cs_type_);
+          OZ(print_field(null_obj, *csv_data_writer));
         } else if (!ob_is_text_tc(select_exprs.at(col_idx)->obj_meta_.get_type()) || obj.is_null()) {
           OZ(print_field(obj, *csv_data_writer));
         } else { // text tc

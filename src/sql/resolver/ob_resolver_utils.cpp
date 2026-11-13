@@ -23,6 +23,7 @@
 #include "sql/engine/cmd/ob_load_data_parser.h"
 #include "sql/resolver/cmd/ob_load_data_stmt.h"
 #include "sql/resolver/ob_resolver_utils.h"
+#include "sql/engine/basic/ob_file_table_reader.h"
 #include "sql/code_generator/ob_column_index_provider.h"
 #include "query/resolver/ob_partition_type_policy.h"
 #include "sql/resolver/cmd/ob_load_data_stmt.h"
@@ -125,6 +126,14 @@ int ObResolverUtils::get_all_function_table_column_names(const TableItem &table_
   ObPLPackageGuard *package_guard = nullptr;
   const ObUserDefinedType *user_type = NULL;
   ObExecContext *exec_ctx = params.session_info_->get_cur_exec_ctx();
+  if (table_item.is_file_table()) {
+    const ObFileTableDef *file_def = table_item.file_table_def_;
+    CK (OB_NOT_NULL(file_def));
+    for (int64_t i = 0; OB_SUCC(ret) && i < file_def->column_count_; ++i) {
+      OZ (column_names.push_back(file_def->columns_[i].name_));
+    }
+    return ret;
+  }
   CK (OB_NOT_NULL(exec_ctx));
   OZ (exec_ctx->get_package_guard(package_guard));
   CK (OB_NOT_NULL(package_guard));

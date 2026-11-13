@@ -373,6 +373,8 @@ END_P SET_VAR DELIMITER
 //-----------------------------non_reserved keyword end---------------------------------------------
 %type <node> sql_stmt stmt_list stmt opt_end_p
 %type <node> select_stmt update_stmt delete_stmt
+%type <node> copy_to_file_stmt opt_copy_file_option_list copy_file_option_list copy_file_option
+%type <node> file_table_expr opt_file_table_arg_list file_table_arg_list file_table_arg
 %type <node> insert_stmt single_table_insert values_clause dml_table_name
 %type <node> create_table_stmt create_table_like_stmt fork_table_stmt fork_database_stmt diff_table_stmt merge_table_stmt opt_table_option_list table_option_list table_option table_option_list_space_seperated parallel_option lob_storage_clause lob_storage_parameter lob_storage_parameters lob_chunk_size
 %type <node> index_or_heap
@@ -557,6 +559,7 @@ opt_end_p:
 /* only preparable statement will set question mark size */
 stmt:
     select_stmt             { $$ = $1; question_mark_issue($$, result); }
+  | copy_to_file_stmt       { $$ = $1; check_question_mark($$, result); }
   | insert_stmt             { $$ = $1; question_mark_issue($$, result); }
   | create_table_stmt       {
     $$ = $1;
@@ -10885,6 +10888,10 @@ tbl_name
 {
   $$ = $1;
 }
+| file_table_expr
+{
+  $$ = $1;
+}
 | hybrid_search_expr
 {
   $$ = $1;
@@ -12306,7 +12313,7 @@ explain_or_desc relation_factor opt_desc_column_option
   malloc_non_terminal_node($$, result->malloc_pool_, T_SHOW_COLUMNS, 4, $$, $2, NULL, $3);
 }
 
-| explain_or_desc explainable_stmt { GEN_EXPLAN_STMT($1, $$, 0, 0, $2, NULL, NULL);}
+| explain_or_desc explainable_stmt { GEN_EXPLAN_STMT($1, $$, ($1 == NULL ? 0 : $1->type_), 0, $2, NULL, NULL);}
 | explain_or_desc PRETTY explainable_stmt { GEN_EXPLAN_STMT($1, $$, 0, T_PRETTY, $3, NULL, NULL);}
 | explain_or_desc PRETTY_COLOR explainable_stmt { GEN_EXPLAN_STMT($1, $$, 0, T_PRETTY_COLOR, $3, NULL, NULL);}
 
@@ -12347,8 +12354,8 @@ explain_or_desc relation_factor opt_desc_column_option
 
 explain_or_desc:
 EXPLAIN {$$ = NULL;}
-| DESCRIBE {$$ = NULL;}
-| DESC  {$$ = NULL;}
+| DESCRIBE {malloc_terminal_node($$, result->malloc_pool_, T_DESCRIBE_SELECT);}
+| DESC  {malloc_terminal_node($$, result->malloc_pool_, T_DESCRIBE_SELECT);}
 ;
 
 explainable_stmt:
@@ -17517,6 +17524,112 @@ literal
 | USER_VARIABLE
 {
   $$ = $1;
+}
+;
+
+/*===========================================================
+*
+*  FILE TABLE (DuckDB style: read_csv / read_json / read_parquet / glob)
+*
+*============================================================*/
+file_table_expr:
+NAME_OB '(' STRING_VALUE opt_file_table_arg_list ')'
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $1, $3, $4, NULL);
+}
+| NAME_OB '(' STRING_VALUE opt_file_table_arg_list ')' relation_name
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $1, $3, $4, $6);
+}
+| NAME_OB '(' STRING_VALUE opt_file_table_arg_list ')' AS relation_name
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_EXPRESSION, 4, $1, $3, $4, $7);
+}
+;
+
+opt_file_table_arg_list:
+/*Empty*/
+{
+  $$ = NULL;
+}
+| ',' file_table_arg_list
+{
+  $$ = $2;
+}
+;
+
+file_table_arg_list:
+file_table_arg
+{
+  $$ = $1;
+}
+| file_table_arg_list ',' file_table_arg
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_LINK_NODE, 2, $1, $3);
+}
+;
+
+file_table_arg:
+relation_name opt_equal_mark conf_const
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_OPTION, 2, $1, $3);
+}
+| relation_name opt_equal_mark relation_name
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_OPTION, 2, $1, $3);
+}
+| relation_name
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_TABLE_OPTION, 2, $1, NULL);
+}
+;
+
+/*===========================================================
+*
+*  COPY ... TO (DuckDB style copy to csv file)
+*
+*============================================================*/
+copy_to_file_stmt:
+COPY '(' select_stmt ')' TO STRING_VALUE opt_copy_file_option_list
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_TO_FILE, 3, $3, $6, $7);
+}
+;
+
+opt_copy_file_option_list:
+/*Empty*/
+{
+  $$ = NULL;
+}
+| '(' copy_file_option_list ')'
+{
+  $$ = $2;
+}
+;
+
+copy_file_option_list:
+copy_file_option
+{
+  $$ = $1;
+}
+| copy_file_option_list ',' copy_file_option
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_LINK_NODE, 2, $1, $3);
+}
+;
+
+copy_file_option:
+relation_name opt_equal_mark conf_const
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_TO_FILE_OPTION, 2, $1, $3);
+}
+| relation_name opt_equal_mark relation_name
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_TO_FILE_OPTION, 2, $1, $3);
+}
+| relation_name
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_TO_FILE_OPTION, 2, $1, NULL);
 }
 ;
 

@@ -27,16 +27,26 @@ namespace sql
 {
 
 class ObExpr;
+class ObFileTableReader;
 class ObFunctionTableSpec : public ObOpSpec
 {
 OB_UNIS_VERSION_V(1);
 public:
   ObFunctionTableSpec(common::ObIAllocator &alloc, const ObPhyOperatorType type)
-    : ObOpSpec(alloc, type), value_expr_(nullptr), column_exprs_(alloc), has_correlated_expr_(false)
+    : ObOpSpec(alloc, type), value_expr_(nullptr), column_exprs_(alloc), has_correlated_expr_(false),
+      file_path_(), file_type_(0), has_header_(true), sample_size_(-1),
+      column_ids_(alloc), column_names_(alloc)
   {}
   ObExpr *value_expr_;
   common::ObFixedArray<ObExpr*, common::ObIAllocator> column_exprs_;
   bool has_correlated_expr_;
+  // file table (read_csv/read_json/read_parquet/glob)
+  common::ObString file_path_;
+  int64_t file_type_;
+  bool has_header_;
+  int64_t sample_size_;
+  common::ObFixedArray<int64_t, common::ObIAllocator> column_ids_;
+  common::ObFixedArray<common::ObString, common::ObIAllocator> column_names_;
 };
 
 class ObFunctionTableOp : public ObOperator
@@ -48,7 +58,9 @@ public:
     already_calc_(false),
     row_count_(0),
     col_count_(0),
-    value_table_(NULL) 
+    value_table_(NULL),
+    next_row_func_(NULL),
+    reader_(NULL)
   {}
 
   virtual int inner_open() override;
@@ -60,6 +72,8 @@ public:
 private:
   int inner_get_next_row_udf();
   int inner_get_next_row_sys_func();
+  int inner_get_next_row_file();
+  int open_reader();
   int get_current_result(common::ObObj &result);
   int64_t node_idx_;
   bool already_calc_;
@@ -68,6 +82,7 @@ private:
   common::ObObj value_;
   pl::ObPLCollection *value_table_;
   int (ObFunctionTableOp::*next_row_func_)();
+  ObFileTableReader *reader_;
 };
 
 } // end namespace sql
