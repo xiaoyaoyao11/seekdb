@@ -104,7 +104,7 @@ static void sk_load_build_params(cuvsCagraIndexParams_t ip, long dim)
    * the descent budget must stay >= 50 with the baseline search queue.
    * v8 keeps the cheaper 30-iteration build and buys the recall back
    * with a moderately wider search-time queue (768 instead of 1024,
-   * which broke the GPU path outright), which costs query time only.
+   * which broke the GPU path outright), which costs query time only. */
   ip->intermediate_graph_degree = low_dim ? 128 : 160;
   ip->nn_descent_niter = low_dim ? 20 : 30;
 }
