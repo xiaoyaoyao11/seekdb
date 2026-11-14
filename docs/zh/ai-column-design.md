@@ -345,3 +345,61 @@ $env:PATH = "C:\WINDOWS\System32\WindowsPowerShell\v1.0;D:\deepseek\seekdb\deps\
 
 测试：`ai_function_enhancement.test` 依赖运行在 `0.0.0.0:8000` 的 Mock AI Service；
 AI 列测试同样应基于 Mock 服务，覆盖课程稿第 5–9 节场景。
+
+---
+
+## 6. 当前实现状态（ai-column-2026 分支）
+
+### 6.1 已实现并可在实例上验证
+
+| 能力 | 实现位置 | 验证方式 |
+| --- | --- | --- |
+| `col <type> AI COLUMN (<ai_expr>) WITH (sync_mode, max_retries)` DDL 语法 | `src/sql/parser/sql_parser_mysql_mode.y`、`ObDDLResolver::resolve_ai_column_attribute` | `SHOW CREATE TABLE` 原样回显 |
+| 选项校验（仅 async、`max_retries` ∈ [0,100]） | `src/sql/resolver/ddl/ob_ddl_resolver.cpp` | 非法选项报错 |
+| 表达式白名单与类型契约（AI_COMPLETE 限标量、AI_EMBED 限 VECTOR、维度一致性） | `ObDDLResolver::check_ai_column_expr` | 维度不一致时 DDL 拒绝 |
+| 元数据持久化（AI 标志 + 表达式 + 选项写入 `__all_column`） | `ObColumnSchemaV2::set_ai_column_meta` / `refresh_ai_column_meta` | 重启后 `SHOW CREATE TABLE` 仍显示 AI COLUMN |
+| 用户会话禁止直接写 AI 列 | `ob_insert_resolver` / `ob_dml_resolver` / `ob_del_upd_resolver` | `INSERT/UPDATE` 显式赋值 AI 列报错 3105 |
+| 异步生成插件（按表扫描 `IS NULL` 行并调用模型回写） | `src/observer/change_stream/ob_cs_plugin_ai_column.{h,cpp}` | 代码已完成，触发链路见 6.2 |
+| DML 参数携带 AI 列标志（按数据表而非索引表判定） | `src/sql/code_generator/ob_dml_cg_service.cpp` | 已修正 index table → data table 解析 |
+| Fake Upstream 与调用统计 | `tools/ai_gateway/{README.md,test_gateway.py}` | `python3 tools/ai_gateway/test_gateway.py stats` |
+| 单元测试入口 | `unittest/sql/parser/test_ai_column_parser.cpp`、`unittest/sql/resolver/test_ai_column_resolver.cpp`、`unittest/share/schema/test_ai_column_schema.cpp` | 需接入仓库 unittest 构建（当前仓库未提供 CMake 目标） |
+
+### 6.2 部分实现 / 未验证
+
+- 异步生成：插件逻辑已具备，但本地构建实测 `INSERT` 后 change stream 未收到带
+  `has_async_index` 标志的 redo（`CSDispatcher` 无批次），因此没有产生模型调用。
+  需继续排查 DML code generator → `ObDmlTablePlan::set_has_async_index` →
+  `ObAccessService` → redo header 的传递链路。
+- DML 同事务失效：`UPDATE` 依赖列时未在同一事务内把 AI 列置 NULL、也未登记任务；
+  插件对 UPDATE 行采取“直接覆盖新值”的方式，生成期间旧值仍可见。
+- 依赖列变更触发重算：插件按表达式文本包含列名做启发式判断，未做 AST 级依赖分析。
+
+### 6.3 尚未实现（验收测试会失败的点）
+
+1. `oceanbase.__all_ai_column` / `oceanbase.__all_ai_column_task` 两个可观测表尚未创建；
+   `SHOW AI COLUMNS FROM t` 语法未接入（当前报 1064）。
+2. DML 同事务失效：`UPDATE` 依赖列时未在同一事务内把 AI 列置 NULL、也未登记任务，
+   `__all_ai_column_task` 的事务内可见性因此无法满足。
+3. 会话变量 `ai_column_strict_read` 未注册（当前报 1193），严格读取的列级检查未实现。
+4. `ALTER TABLE ... RETRY [FAILED] AI COLUMN c [WHERE ...]` 语法与执行未实现。
+5. 任务级重试计数、失败终态、版本栅栏（迟到结果丢弃）、整组原子发布尚未实现；
+   现有插件按“表级扫描 + `IS NULL` 条件更新”工作，天然具备一定幂等性，但不满足
+   测试要求的状态机与事务可见性语义。
+6. 向量索引一致性依赖前述失效/发布路径，尚未单独验证。
+
+### 6.3 本地验收方法
+
+```bash
+# 1) 启动 Fake Upstream
+python3 tools/ai_gateway/test_gateway.py start --port 19120
+
+# 2) 启动实例
+./build_release/src/observer/seekdb --nodaemon --base-dir <dir> --port 2881
+
+# 3) 回放验收用例（Linux 下使用 mysql_test 框架；Windows 下用 pymysql 逐条执行）
+tools/deploy/mysql_test/test_suite/ai_column/t/ai_column_ddl.test
+```
+
+> 说明：本节如实反映分支现状。6.2/6.3 中的能力需要继续修改 resolver/executor/storage，
+> 完成后应逐条回放 `tools/deploy/mysql_test/test_suite/ai_column/t/` 下的 5 个用例。
+
