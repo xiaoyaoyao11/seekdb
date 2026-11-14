@@ -219,8 +219,13 @@ int ObService::start()
   if (!inited_) {
     ret = OB_NOT_INIT;
     FLOG_WARN("ob_service is not inited", KR(ret), K_(inited));
-  } else if (OB_FAIL(ai_column_worker_.start())) {
-    FLOG_WARN("start ai column worker failed", KR(ret));
+  } else {
+    // The ai column worker only serves async ai columns. A failure to start it
+    // must not prevent the server from starting.
+    int tmp_ret = ai_column_worker_.start();
+    if (OB_SUCCESS != tmp_ret) {
+      FLOG_WARN("start ai column worker failed", K(tmp_ret));
+    }
   }
   FLOG_INFO("[OBSERVICE_NOTICE] start ob_service end", KR(ret));
   if (OB_FAIL(ret)) {
