@@ -626,6 +626,10 @@ public:
   {
     return inner_flag_;
   }
+  // AI column maintenance statements executed by the server itself must be allowed
+  // to write read-only AI columns and must not be checked by strict read.
+  bool is_ai_column_internal() const { return ai_column_internal_; }
+  void set_ai_column_internal(bool is_internal) { ai_column_internal_ = is_internal; }
   void reset_audit_record(bool need_retry = false)
   {
     if (!need_retry) {
@@ -909,6 +913,7 @@ private:
   // in_transaction_ has been merged into trans_flags_.
 //  int64_t has_write_stmt_in_trans_;
   bool inner_flag_; // whether it is a virtual session for an internal request
+  bool ai_column_internal_ = false; // executing internal AI column maintenance SQL
   // After version 2.2, this variable is no longer used
   bool is_max_availability_mode_;
   typedef common::hash::ObHashMap<ObPsStmtId, ObPsSessionInfo *,

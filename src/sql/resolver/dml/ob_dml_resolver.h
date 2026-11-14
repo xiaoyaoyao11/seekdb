@@ -293,6 +293,12 @@ public:
                                             const TableItem &table_item, // table_item of dml table(child_table)
                                             const ObTableSchema &parent_table_schema,
                                             const ObForeignKeyInfo *fk_info);
+  // When ai_column_strict_read is on, a statement that references an AI column
+  // fails immediately if any row of that column is not finished yet.
+  int check_ai_column_strict_read(ObDMLStmt &stmt);
+  // Force the plan to open an inner SQL connection when the statement modifies a
+  // table with AI columns (used for transactional task registration).
+  int mark_ai_column_nested_sql(ObDMLStmt &stmt);
   virtual int resolve_column_ref_expr(const ObQualifiedName &q_name, ObRawExpr *&real_ref_expr);
   int resolve_sql_expr(const ParseNode &node, ObRawExpr *&expr,
                        ObArray<ObQualifiedName> *input_columns = NULL);

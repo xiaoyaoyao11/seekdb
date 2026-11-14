@@ -503,8 +503,10 @@ private:
                          && ObStmt::is_dml_stmt(parent_ctx->get_sql_ctx()->stmt_type_)
                          && parent_ctx->get_pl_stack_ctx() != nullptr);
     bool is_fk_nested = (parent_ctx != nullptr && parent_ctx->get_das_ctx().is_fk_cascading_);
+    bool is_ai_column_nested = (parent_ctx != nullptr
+                                && parent_ctx->get_das_ctx().is_ai_column_nested_);
     bool is_online_stat_gathering_nested = (parent_ctx != nullptr && parent_ctx->is_online_stats_gathering());
-    return is_pl_nested || is_fk_nested || is_online_stat_gathering_nested;
+    return is_pl_nested || is_fk_nested || is_ai_column_nested || is_online_stat_gathering_nested;
   }
 
 };

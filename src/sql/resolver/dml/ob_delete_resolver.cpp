@@ -113,6 +113,11 @@ int ObDeleteResolver::resolve(const ParseNode &parse_tree)
       } else if (OB_FAIL(check_safe_update_mode(delete_stmt, is_multi_table_delete))) {
       } else { /*do nothing */ }
     }
+    if (OB_SUCC(ret)) {
+      if (OB_FAIL(mark_ai_column_nested_sql(*delete_stmt))) {
+      } else if (OB_FAIL(check_ai_column_strict_read(*delete_stmt))) {
+      }
+    }
   }
   return ret;
 }

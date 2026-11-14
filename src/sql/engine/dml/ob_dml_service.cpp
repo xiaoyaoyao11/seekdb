@@ -2166,6 +2166,10 @@ int ObDMLService::handle_after_processing_multi_row(ObDMLModifyRowsList *dml_mod
           }
         }
         // process after row trigger
+        if (OB_SUCC(ret) && (t_update != dml_event
+                             || reinterpret_cast<ObUpdRtDef &>(dml_rtdef).is_row_changed_)
+            && OB_FAIL(AIColumnHandle::do_handle(op, dml_ctdef, dml_event))) {
+        }
         if (OB_SUCC(ret) && dml_ctdef.trig_ctdef_.all_tm_points_.has_after_row()) {
           ObEvalCtx &eval_ctx = op.get_eval_ctx();
           if (dml_event != t_insert && dml_event != t_update && dml_event != t_delete) {
@@ -2215,6 +2219,10 @@ int ObDMLService::handle_after_processing_single_row(ObDMLModifyRowNode &modify_
         if (reinterpret_cast<ObUpdRtDef &>(dml_rtdef).is_row_changed_ && OB_FAIL(ForeignKeyHandle::do_handle(op, dml_ctdef, dml_rtdef))) {
         }
       } else if (OB_FAIL(ForeignKeyHandle::do_handle(op, dml_ctdef, dml_rtdef))) {
+      }
+      if (OB_SUCC(ret) && (t_update != dml_event
+                           || reinterpret_cast<ObUpdRtDef &>(dml_rtdef).is_row_changed_)
+          && OB_FAIL(AIColumnHandle::do_handle(op, dml_ctdef, dml_event))) {
       }
     }
     if (OB_SUCC(ret) && OB_FAIL(TriggerHandle::do_handle_after_row(op, dml_ctdef.trig_ctdef_, dml_rtdef.trig_rtdef_, dml_event))) {

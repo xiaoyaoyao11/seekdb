@@ -1328,13 +1328,21 @@ int ObAIFuncModel::call_completion(ObString &prompt, ObJsonObject *config, ObStr
     LOG_USER_ERROR(OB_INVALID_ARGUMENT, "ai_complete, info type is not completion");
   } else if (OB_FAIL(ObAIFuncUtils::get_complete_provider(*allocator_, endpoint_info_.get_provider(), complete_provider))) {
   } else if (OB_FAIL(endpoint_info_.get_unencrypted_access_key(*allocator_, unencrypted_access_key))) {
-  } else if (OB_FAIL(complete_provider->get_header(*allocator_, unencrypted_access_key, headers))) {
-  } else if (OB_FAIL(complete_provider->get_body(*allocator_, request_model_name, prompt_str, prompt, config, body))) {
-  } else if (OB_FAIL(client.send_post(*allocator_, endpoint_info_.get_url(), headers, body, response))) {
-  } else if (OB_FAIL(complete_provider->parse_output(*allocator_, response, result_base))) {
-  } else if (OB_FAIL(ObAIFuncJsonUtils::print_json_to_str(*allocator_, result_base, result_str))) {
-  } else {
-    result = result_str;
+  } else if (NULL != config && NULL != config->get_value(ObString::make_string("system_prompt"))
+             && ObJsonNodeType::J_STRING
+                 == config->get_value(ObString::make_string("system_prompt"))->json_type()) {
+    prompt_str = static_cast<ObJsonString *>(
+        config->get_value(ObString::make_string("system_prompt")))->get_str();
+  }
+  if (OB_SUCC(ret)) {
+    if (OB_FAIL(complete_provider->get_header(*allocator_, unencrypted_access_key, headers))) {
+    } else if (OB_FAIL(complete_provider->get_body(*allocator_, request_model_name, prompt_str, prompt, config, body))) {
+    } else if (OB_FAIL(client.send_post(*allocator_, endpoint_info_.get_url(), headers, body, response))) {
+    } else if (OB_FAIL(complete_provider->parse_output(*allocator_, response, result_base))) {
+    } else if (OB_FAIL(ObAIFuncJsonUtils::print_json_to_str(*allocator_, result_base, result_str))) {
+    } else {
+      result = result_str;
+    }
   }
   if (ret == OB_INVALID_DATA) {
     ObString response_str;

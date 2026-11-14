@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL_RESV
+#include <cctype>
 #include "config_bridge.h"
 #include "sql/resolver/ddl/ob_alter_table_resolver.h"
 #include "sql/resolver/expr/ob_raw_expr_part_expr_checker.h"
@@ -51,6 +52,34 @@ ObAlterTableResolver::~ObAlterTableResolver()
 {
 }
 
+
+namespace
+{
+
+// Returns the offset right after the last WHERE keyword of the statement, or -1.
+int64_t find_last_where_clause(const ObString &query)
+{
+  int64_t pos = -1;
+  const char *p = query.ptr();
+  const int64_t len = query.length();
+  for (int64_t i = 0; NULL != p && i + 5 <= len; ++i) {
+    const bool left_ok = 0 == i
+        || !(isalnum(static_cast<unsigned char>(p[i - 1])) || '_' == p[i - 1]);
+    const bool right_ok = i + 5 == len
+        || !(isalnum(static_cast<unsigned char>(p[i + 5])) || '_' == p[i + 5]);
+    if (left_ok && right_ok && 0 == strncasecmp(p + i, "where", 5)) {
+      int64_t after = i + 5;
+      while (after < len && (' ' == p[after] || '\t' == p[after]
+                             || '\n' == p[after] || '\r' == p[after])) {
+        ++after;
+      }
+      pos = after;
+    }
+  }
+  return pos;
+}
+
+} // namespace
 
 int ObAlterTableResolver::resolve(const ParseNode &parse_tree)
 {
@@ -420,6 +449,70 @@ int ObAlterTableResolver::resolve_action_list(const ParseNode &node)
         case T_CONVERT_TO_CHARACTER: {
           alter_table_stmt->set_convert_to_character();
           if (OB_FAIL(resolve_convert_to_character(*action_node))) {
+          }
+          break;
+        }
+        case T_ALTER_AI_COLUMN_RETRY: {
+          ParseNode *column_node = action_node->children_[0];
+          ParseNode *failed_node = action_node->children_[2];
+          // The action list has been flattened by merge_tree, so the number of
+          // actions is exactly the number of children of this node.
+          const int64_t action_count = node.num_child_;
+          if (action_count > 1) {
+            ret = OB_NOT_SUPPORTED;
+            SQL_RESV_LOG(WARN, "retry with other actions is not supported", K(ret));
+            LOG_USER_ERROR(OB_NOT_SUPPORTED,
+                           "combining AI COLUMN RETRY with another ALTER action");
+          } else if (OB_ISNULL(column_node) || OB_ISNULL(table_schema_)) {
+            ret = OB_ERR_UNEXPECTED;
+          } else {
+            const ObString column_name(column_node->str_len_, column_node->str_value_);
+            const ObColumnSchemaV2 *ai_column = table_schema_->get_column_schema(column_name);
+            const bool is_failed = NULL != failed_node;
+            if (OB_ISNULL(ai_column) || !ai_column->is_ai_column()) {
+              ret = OB_NOT_SUPPORTED;
+              SQL_RESV_LOG(WARN, "retrying a non ai column is not supported", K(ret));
+              LOG_USER_ERROR(OB_NOT_SUPPORTED, "retrying a column that is not an AI column");
+            } else if (is_failed && 0 != strncasecmp(failed_node->str_value_, "FAILED", 6)) {
+              ret = OB_NOT_SUPPORTED;
+              LOG_USER_ERROR(OB_NOT_SUPPORTED, "retrying AI columns with the given filter");
+            } else {
+              // Keep enough information for the executor, which performs the retry
+              // with inner SQL. The predicate text is sliced from the original SQL
+              // so that the pseudo `status` column can be rewritten textually.
+              ObString query = session_info_->get_current_query_string();
+              ObString predicate;
+              const int64_t where_pos = find_last_where_clause(query);
+              if (where_pos >= 0) {
+                int64_t end = query.length();
+                while (end > where_pos && (';' == query.ptr()[end - 1]
+                                           || ' ' == query.ptr()[end - 1]
+                                           || '\n' == query.ptr()[end - 1]
+                                           || '\r' == query.ptr()[end - 1]
+                                           || '\t' == query.ptr()[end - 1])) {
+                  --end;
+                }
+                predicate.assign_ptr(query.ptr() + where_pos, static_cast<int32_t>(end - where_pos));
+              }
+              ObSqlString info;
+              if (OB_FAIL(info.append_fmt("@@ai_retry@@%lu|%.*s|%d|%.*s",
+                                           table_schema_->get_table_id(),
+                                           column_name.length(), column_name.ptr(),
+                                           is_failed ? 1 : 0,
+                                           predicate.length(), predicate.ptr()))) {
+              } else {
+                char *buf = static_cast<char *>(allocator_->alloc(info.length()));
+                if (OB_ISNULL(buf)) {
+                  ret = OB_ALLOCATE_MEMORY_FAILED;
+                } else {
+                  MEMCPY(buf, info.ptr(), info.length());
+                  // ddl_stmt_str_ is overwritten by ObResolver::resolve() after the
+                  // specific resolver returns, keep the retry request on the stmt.
+                  alter_table_stmt->set_ai_retry_info(
+                      ObString(static_cast<int32_t>(info.length()), buf));
+                }
+              }
+            }
           }
           break;
         }

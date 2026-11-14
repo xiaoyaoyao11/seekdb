@@ -388,7 +388,8 @@ OB_DEF_DESERIALIZE(ObColumnSchemaV2)
                 ai_max_retries_,
                 local_session_vars_);
   }
-  if (OB_SUCC(ret) && OB_FAIL(refresh_ai_column_meta())) {
+  if (OB_SUCC(ret) && OB_FAIL(deep_copy_str(ai_column_expr, ai_column_expr_))) {
+  } else if (OB_SUCC(ret) && OB_FAIL(refresh_ai_column_meta())) {
   }
   return ret;
 }
