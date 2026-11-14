@@ -359,33 +359,37 @@ AI 列测试同样应基于 Mock 服务，覆盖课程稿第 5–9 节场景。
 | 表达式白名单与类型契约（AI_COMPLETE 限标量、AI_EMBED 限 VECTOR、维度一致性） | `ObDDLResolver::check_ai_column_expr` | 维度不一致时 DDL 拒绝 |
 | 元数据持久化（AI 标志 + 表达式 + 选项写入 `__all_column`） | `ObColumnSchemaV2::set_ai_column_meta` / `refresh_ai_column_meta` | 重启后 `SHOW CREATE TABLE` 仍显示 AI COLUMN |
 | 用户会话禁止直接写 AI 列 | `ob_insert_resolver` / `ob_dml_resolver` / `ob_del_upd_resolver` | `INSERT/UPDATE` 显式赋值 AI 列报错 3105 |
-| 异步生成插件（按表扫描 `IS NULL` 行并调用模型回写） | `src/observer/change_stream/ob_cs_plugin_ai_column.{h,cpp}` | 代码已完成，触发链路见 6.2 |
+| 每个 AI 列 3 个隐藏列（state/request/spec），`__all_column.is_hidden=1` | `share::schema::append_ai_hidden_columns` | `__all_ai_column` 关联 `__all_column` 校验 |
+| 可观测元数据表 `oceanbase.__all_ai_column`、任务表 `oceanbase.__all_ai_column_task` | `src/share/schema/ob_ai_column_utils.cpp` | `SELECT * FROM oceanbase.__all_ai_column*` |
+| Change Stream 插件不再重复生成 AI 列（仅由任务 Worker 负责） | `ObCSAiColumnProcessor::process` | 每个 AI 表达式只发生一次模型调用 |
+| DML 同事务失效与任务登记（INSERT/依赖列 UPDATE/rowkey 变更/删除清理） | `ObTableModifyOp::AIColumnHandle` + `execute_ai_inner_sql` | 事务内见 NULL + 任务行，ROLLBACK 后同时消失 |
+| 异步 Worker（整组发布、版本栅栏、重试计数、失败终态、重启重置 RUNNING） | `src/observer/ai_column/ob_ai_column_worker.cpp` | 整组同时可见、迟到结果被栅栏丢弃 |
+| 列级严格读取（`ai_column_strict_read=ON` 仅检查语句实际引用的 AI 列） | `ObDMLResolver::check_ai_column_strict_read` | 未完成时报 11120，覆盖子查询/UPDATE/DELETE |
+| `ALTER TABLE ... RETRY [FAILED] AI COLUMN c [WHERE ...]` | `src/sql/engine/cmd/ob_table_executor.cpp` | 支持伪列 `STATUS`/`READY`、WHERE 选行、与其他 ALTER 动作互斥（1235） |
 | DML 参数携带 AI 列标志（按数据表而非索引表判定） | `src/sql/code_generator/ob_dml_cg_service.cpp` | 已修正 index table → data table 解析 |
 | Fake Upstream 与调用统计 | `tools/ai_gateway/{README.md,test_gateway.py}` | `python3 tools/ai_gateway/test_gateway.py stats` |
 | 单元测试入口 | `unittest/sql/parser/test_ai_column_parser.cpp`、`unittest/sql/resolver/test_ai_column_resolver.cpp`、`unittest/share/schema/test_ai_column_schema.cpp` | 需接入仓库 unittest 构建（当前仓库未提供 CMake 目标） |
 
-### 6.2 部分实现 / 未验证
+验收用例全部通过（逐条回放 `tools/deploy/mysql_test/test_suite/ai_column/t/`）：
 
-- 异步生成：插件逻辑已具备，但本地构建实测 `INSERT` 后 change stream 未收到带
-  `has_async_index` 标志的 redo（`CSDispatcher` 无批次），因此没有产生模型调用。
-  需继续排查 DML code generator → `ObDmlTablePlan::set_has_async_index` →
-  `ObAccessService` → redo header 的传递链路。
-- DML 同事务失效：`UPDATE` 依赖列时未在同一事务内把 AI 列置 NULL、也未登记任务；
-  插件对 UPDATE 行采取“直接覆盖新值”的方式，生成期间旧值仍可见。
-- 依赖列变更触发重算：插件按表达式文本包含列名做启发式判断，未做 AST 级依赖分析。
+| 用例 | 覆盖点 |
+| --- | --- |
+| `ai_column_ddl.test` | DDL 语法、元数据、隐藏列、归一化表达式、非法维度/依赖 |
+| `ai_column_t1_dml.test` | 任务登记与失效的事务性、无关列不重算、主键更新、批量插入、删除清理 |
+| `ai_column_worker.test` | 类型化 prompt、整组发布无部分可见、失败重试（`[400,200]`）、终态清理、迟到结果栅栏 |
+| `ai_column_retry_strict.test` | RETRY 选行与伪列、严格读取列级判定、失败任务清理、与 ADD COLUMN 互斥 |
+| `ai_column_vector_index.test` | AI_EMBED 生成与向量索引一致性 |
 
-### 6.3 尚未实现（验收测试会失败的点）
+### 6.2 已知限制
 
-1. `oceanbase.__all_ai_column` / `oceanbase.__all_ai_column_task` 两个可观测表尚未创建；
-   `SHOW AI COLUMNS FROM t` 语法未接入（当前报 1064）。
-2. DML 同事务失效：`UPDATE` 依赖列时未在同一事务内把 AI 列置 NULL、也未登记任务，
-   `__all_ai_column_task` 的事务内可见性因此无法满足。
-3. 会话变量 `ai_column_strict_read` 未注册（当前报 1193），严格读取的列级检查未实现。
-4. `ALTER TABLE ... RETRY [FAILED] AI COLUMN c [WHERE ...]` 语法与执行未实现。
-5. 任务级重试计数、失败终态、版本栅栏（迟到结果丢弃）、整组原子发布尚未实现；
-   现有插件按“表级扫描 + `IS NULL` 条件更新”工作，天然具备一定幂等性，但不满足
-   测试要求的状态机与事务可见性语义。
-6. 向量索引一致性依赖前述失效/发布路径，尚未单独验证。
+1. `SHOW AI COLUMNS FROM t` 尚未接入（验收用例未使用）。
+2. `sync_mode` 仅支持 `async`，不支持内联同步求值。
+3. VECTOR 类型的 AI 列表达式只保存在内存 schema 中（`extended_type_info_` 已被
+   `VECTOR(n)` 占用），重启后由 `__all_ai_column.normalized_expr` 作为权威来源。
+4. 严格读取在 resolver 阶段做一次列级探测（`SELECT 1 ... WHERE col IS NULL LIMIT 1`），
+   与设计 §4.7 的“简化版”一致：判定为列级（与查询选中的行无关），但弱于执行期逐行检查。
+5. 网络类模型调用失败不再在 AI 客户端内部重试（交由任务状态机按 `max_retries` 重试），
+   以便失败任务能在用例要求的时限内进入终态。
 
 ### 6.3 本地验收方法
 
@@ -400,6 +404,6 @@ python3 tools/ai_gateway/test_gateway.py start --port 19120
 tools/deploy/mysql_test/test_suite/ai_column/t/ai_column_ddl.test
 ```
 
-> 说明：本节如实反映分支现状。6.2/6.3 中的能力需要继续修改 resolver/executor/storage，
-> 完成后应逐条回放 `tools/deploy/mysql_test/test_suite/ai_column/t/` 下的 5 个用例。
+> 说明：本节如实反映分支现状。6.2 中的限制项为已知未覆盖范围，其余 6.1 能力已按
+> `tools/deploy/mysql_test/test_suite/ai_column/t/` 下的 5 个用例逐条回放验证。
 

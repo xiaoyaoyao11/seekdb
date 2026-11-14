@@ -335,47 +335,12 @@ int ObCSAiColumnProcessor::handle_update_row_(uint64_t table_id, const ObCSRow &
 int ObCSAiColumnProcessor::process(common::ObIArray<ObCSRow> &rows)
 {
   int ret = common::OB_SUCCESS;
-  if (OB_FAIL(init_schema_guard_())) {
-  } else if (!tablet_to_table_.created()
-             && OB_FAIL(tablet_to_table_.create(64, "CSAiColT2T"))) {
-  } else if (!done_tables_.created()
-             && OB_FAIL(done_tables_.create(64, "CSAiColDone"))) {
-  } else if (OB_FAIL(done_tables_.reuse())) {
-  } else {
-    for (int64_t i = 0; OB_SUCC(ret) && i < rows.count(); ++i) {
-      const ObCSRow &row = rows.at(i);
-      if (blocksstable::DF_INSERT != row.dml_flag_
-          && blocksstable::DF_UPDATE != row.dml_flag_) {
-        continue;
-      }
-      uint64_t table_id = common::OB_INVALID_ID;
-      int tmp_ret = resolve_table_id_from_tablet_id_(row.tablet_id_, table_id);
-      if (OB_SUCCESS != tmp_ret || common::OB_INVALID_ID == table_id) {
-        LOG_WARN("failed to resolve table id for ai column", K(tmp_ret), K(row.tablet_id_));
-        continue;
-      }
-      if (blocksstable::DF_UPDATE == row.dml_flag_) {
-        // Regenerate the updated row when a dependency column changed.
-        tmp_ret = handle_update_row_(table_id, row);
-        if (OB_SUCCESS != tmp_ret) {
-          LOG_WARN("failed to regenerate ai column on update", K(tmp_ret), K(table_id));
-        }
-        continue;
-      }
-      int64_t dummy = 0;
-      if (OB_SUCCESS == done_tables_.get_refactored(table_id, dummy)) {
-        continue;
-      }
-      if (OB_SUCCESS != (tmp_ret = done_tables_.set_refactored(table_id, 1))) {
-        LOG_WARN("failed to mark ai column table done", K(tmp_ret), K(table_id));
-        continue;
-      }
-      tmp_ret = handle_table_(table_id);
-      if (OB_SUCCESS != tmp_ret) {
-        LOG_WARN("failed to handle ai column table", K(tmp_ret), K(table_id));
-      }
-    }
-  }
+  // AI columns are maintained asynchronously: the DML path registers a task row in
+  // oceanbase.__all_ai_column_task inside the same transaction and ObAIColumnWorker
+  // publishes the result under a version fence. Generating the same column here as
+  // well would evaluate every AI expression twice (and race with the registered
+  // tasks), so the change stream plugin does not generate AI columns.
+  UNUSED(rows);
   return ret;
 }
 

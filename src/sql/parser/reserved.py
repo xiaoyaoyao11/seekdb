@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # description:
 class SqlKeywords:
     reserved_92 = '''
@@ -1127,6 +1127,7 @@ class SqlKeywords:
          REPLICATION
          RESET
          RESTORE
+         RETRY
          RESUME
          RETURNED_SQLSTATE
          RETURNS
@@ -1786,6 +1787,7 @@ class SqlKeywords:
          RESOURCE
          RESTART
          RESTORE
+         RETRY
          RESUME
          RETURNED_SQLSTATE
          RETURNS
@@ -2135,3 +2137,4 @@ if (__name__ == '__main__'):
 ##            except ValueError:
 ##                print("U ", end = "")
 ##        print("")
+

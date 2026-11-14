@@ -104,8 +104,11 @@ public:
     alter_table_arg_.lock_session_create_ts_ = create_ts;
   }
   void set_lock_priority();
+  void set_ai_retry_info(const common::ObString &info) { ai_retry_info_ = info; }
+  const common::ObString &get_ai_retry_info() const { return ai_retry_info_; }
 private:
   obcall::ObAlterTableArg alter_table_arg_;
+  common::ObString ai_retry_info_;
   bool is_comment_table_;
   bool is_alter_system_;
   common::ObSArray<obcall::ObCreateIndexArg*> index_arg_list_;
