@@ -37,6 +37,7 @@ namespace
 {
 
 const int64_t AI_WORKER_IDLE_INTERVAL_US = 100 * 1000;
+const int64_t AI_WORKER_STARTUP_GRACE_US = 3 * 1000 * 1000;
 const int64_t AI_WORKER_BATCH_SIZE = 64;
 const int64_t AI_WORKER_RETRY_DELAY_US = 300 * 1000;
 
@@ -108,6 +109,16 @@ void ObAIColumnWorker::run1()
   }
   if (has_set_stop()) {
     LOG_INFO("ai column worker stopped before serving");
+    return;
+  }
+  // Give the very first statements of the instance a quiet window: the tables are
+  // also created by the DDL path, so the worker does not have to race with the
+  // first user DDL that follows the transition to serving.
+  for (int64_t i = 0; !has_set_stop() && i < AI_WORKER_STARTUP_GRACE_US / AI_WORKER_IDLE_INTERVAL_US; ++i) {
+    ob_usleep(AI_WORKER_IDLE_INTERVAL_US);
+  }
+  if (has_set_stop()) {
+    LOG_INFO("ai column worker stopped before startup grace elapsed");
     return;
   }
   if (OB_FAIL(share::schema::ensure_ai_column_tables(*sql_proxy_))) {
