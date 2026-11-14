@@ -17,6 +17,7 @@
 #define USING_LOG_PREFIX SHARE_SCHEMA
 #include "ob_column_schema.h"
 #include "share/schema/ob_schema_service.h"
+#include "share/schema/ob_ai_column_util.h"
 
 namespace oceanbase
 {
@@ -278,6 +279,21 @@ int ObColumnSchemaV2::refresh_ai_column_meta()
           ai_sync_mode_ = static_cast<int8_t>(sync_mode);
           ai_max_retries_ = static_cast<int8_t>(max_retries);
         }
+      }
+    }
+  }
+  if (OB_SUCC(ret) && ai_normalized_expr_.empty() && !ai_column_expr_.empty()) {
+    // The normalized expression is not stored in __all_column, it is derived
+    // from the AI expression and the type of the column.  Rebuild it, so that
+    // a schema which was loaded from the inner table exposes it as well.
+    ObIAllocator *allocator = get_allocator();
+    if (OB_NOTNULL(allocator)) {
+      ObString normalized_expr;
+      if (OB_FAIL(ObAiColumnUtil::build_normalized_expr(*allocator, ai_column_expr_,
+                                                          *this, normalized_expr))) {
+        LOG_WARN("failed to rebuild the normalized ai column expression", K(ret));
+      } else {
+        ai_normalized_expr_ = normalized_expr;
       }
     }
   }
