@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # description:
 class SqlKeywords:
     reserved_92 = '''
