@@ -200,9 +200,13 @@ int ObService::init(common::ObMySQLProxy &sql_proxy)
     FLOG_WARN("init tsc timestamp failed", KR(ret));
   } else if (OB_FAIL(schema_release_task_.init(schema_updater_))) {
     FLOG_WARN("init schema release task failed", KR(ret));
-  } else if (OB_FAIL(ai_column_worker_.init(&sql_proxy))) {
-    FLOG_WARN("init ai column worker failed", KR(ret));
   } else {
+    // The ai column worker only serves async ai columns, so a failure to init it
+    // must not turn into an ob_service (and therefore instance) start failure.
+    int tmp_ret = ai_column_worker_.init(&sql_proxy);
+    if (OB_SUCCESS != tmp_ret) {
+      FLOG_WARN("init ai column worker failed", K(tmp_ret));
+    }
     inited_ = true;
   }
   FLOG_INFO("[OBSERVICE_NOTICE] init ob_service finish", KR(ret), K_(inited));
