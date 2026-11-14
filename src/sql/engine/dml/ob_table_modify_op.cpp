@@ -1390,6 +1390,13 @@ int AIColumnHandle::do_handle(ObTableModifyOp &op,
         const ObColumnSchemaV2 *ai_column = all_ai_columns.at(i);
         bool need_invalidate = rowkey_changed;
         const ObString &expr = ai_column->get_ai_column_expr();
+        if (expr.empty()) {
+          // The expression of a collection (VECTOR) AI column is not stored in the
+          // column schema, so its dependencies cannot be derived here. Invalidate
+          // on every update instead: regeneration is still driven by the task
+          // queue and the stored result is never stale.
+          need_invalidate = true;
+        }
         for (int64_t j = 0; OB_SUCC(ret) && !need_invalidate
                             && j < dml_ctdef.column_ids_.count()
                             && j < dml_ctdef.old_row_.count()
