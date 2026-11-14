@@ -10,6 +10,7 @@ OBSERVER_PRIVATE_HEADERS = [
     "change_stream/ob_change_stream_plugin.h",
     "change_stream/ob_change_stream_worker.h",
     "change_stream/ob_cs_plugin_async_index.h",
+    "change_stream/ob_cs_plugin_ai_column.h",
     "composition/retrieval/ob_das_legacy_tr_merge_iter.h",
     "dbms_scheduler/ob_dbms_sched_func_type.h",
     "dbms_scheduler/ob_dbms_sched_job_executor.h",
