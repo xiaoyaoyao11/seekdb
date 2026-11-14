@@ -17631,6 +17631,10 @@ relation_name
 {
   malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_TO_FILE_OPTION, 2, $1, $2);
 }
+| relation_name relation_name
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_TO_FILE_OPTION, 2, $1, $2);
+}
 | relation_name COMP_EQ conf_const
 {
   malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_TO_FILE_OPTION, 2, $1, $3);
