@@ -22,6 +22,8 @@
 #include "lib/allocator/page_arena.h"
 #include "lib/oblog/ob_log_module.h"
 #include "lib/time/ob_time_utility.h"
+#include "share/ob_server_status.h"
+#include "share/ob_server_struct.h"
 #include "share/schema/ob_ai_column_utils.h"
 
 namespace oceanbase
@@ -97,6 +99,17 @@ void ObAIColumnWorker::run1()
 {
   int ret = OB_SUCCESS;
   LOG_INFO("ai column worker started");
+  // The worker is created while the server is still starting, before the SQL
+  // layer and the root service can serve statements. Issuing internal SQL during
+  // that window is pointless (it can only fail) and, on a slow boot, it can
+  // interfere with the boot itself, so wait until the server is serving.
+  while (!has_set_stop() && share::SS_SERVING != GCTX.status_) {
+    ob_usleep(AI_WORKER_IDLE_INTERVAL_US);
+  }
+  if (has_set_stop()) {
+    LOG_INFO("ai column worker stopped before serving");
+    return;
+  }
   if (OB_FAIL(share::schema::ensure_ai_column_tables(*sql_proxy_))) {
     LOG_WARN("failed to ensure ai column tables, will retry later", K(ret));
   } else {
@@ -109,10 +122,12 @@ void ObAIColumnWorker::run1()
   // Table creation is retried by do_work_(), a failure here must not stop the worker.
   ret = OB_SUCCESS;
   while (!has_set_stop() && OB_SUCC(ret)) {
-    ret = do_work_();
-    if (OB_SUCCESS != ret) {
-      LOG_WARN("ai column worker round failed", K(ret));
-      ret = OB_SUCCESS;
+    if (share::SS_SERVING == GCTX.status_) {
+      ret = do_work_();
+      if (OB_SUCCESS != ret) {
+        LOG_WARN("ai column worker round failed", K(ret));
+        ret = OB_SUCCESS;
+      }
     }
     ob_usleep(AI_WORKER_IDLE_INTERVAL_US);
   }
