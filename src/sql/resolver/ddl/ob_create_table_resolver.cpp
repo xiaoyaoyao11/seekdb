@@ -608,6 +608,51 @@ int ObCreateTableResolver::get_resolve_stats_from_table_schema(
 //
 // The hidden columns are appended to @p resolved_cols, so that the caller adds
 // them to the table schema like every other hidden column.
+/**
+ * An AI column must not depend on another AI column.
+ *
+ * The value of an AI column is produced by the asynchronous worker, so it
+ * cannot be the input of another AI column: the worker would have to wait for
+ * the other column, which the asynchronous mode does not support.
+ */
+static int check_ai_column_dependencies(
+    const common::ObSEArray<ObColumnSchemaV2, SEARRAY_INIT_NUM> &resolved_cols,
+    const int64_t user_column_count,
+    common::ObIAllocator &allocator)
+{
+  int ret = OB_SUCCESS;
+  for (int64_t i = 0; OB_SUCC(ret) && i < user_column_count; ++i) {
+    const ObColumnSchemaV2 &ai_column = resolved_cols.at(i);
+    if (!ai_column.is_ai_column()) {
+      continue;
+    }
+    const common::ObString &expr = ai_column.get_ai_column_expr();
+    if (expr.empty()) {
+      continue;
+    }
+    common::ObSEArray<common::ObString, 8> deps;
+    if (OB_FAIL(ObAiColumnUtil::collect_dependency_columns(allocator, expr, deps))) {
+    } else {
+      for (int64_t j = 0; OB_SUCC(ret) && j < deps.count(); ++j) {
+        for (int64_t k = 0; OB_SUCC(ret) && k < user_column_count; ++k) {
+          const ObColumnSchemaV2 &other = resolved_cols.at(k);
+          if (!other.is_ai_column()) {
+            continue;
+          }
+          if (0 == other.get_column_name_str().case_compare(deps.at(j))) {
+            ret = OB_NOT_SUPPORTED;
+            SQL_RESV_LOG(WARN, "an ai column must not depend on another ai column",
+                         K(ret), K(other.get_column_name_str()),
+                         K(ai_column.get_column_name_str()));
+            break;
+          }
+        }
+      }
+    }
+  }
+  return ret;
+}
+
 int ObCreateTableResolver::create_ai_column_hidden_columns(
     common::ObSEArray<ObColumnSchemaV2, SEARRAY_INIT_NUM> &resolved_cols,
     const int64_t user_column_count)
@@ -648,7 +693,7 @@ int ObCreateTableResolver::add_ai_column_hidden_column(
   column.set_nullable(true);
   column.set_is_hidden(true);
   column.set_charset_type(ObCharset::get_default_charset());
-  column.set_collation_type(ObCharset::get_default_collation());
+  column.set_collation_type(ObCharset::get_default_collation(ObCharset::get_default_charset()));
   if (OB_FAIL(column.set_column_name(column_name))) {
   } else if (OB_FAIL(resolved_cols.push_back(column))) {
   } else {
@@ -942,6 +987,13 @@ int ObCreateTableResolver::resolve_table_elements(const ParseNode *node,
         // won't be here
         ret = OB_ERR_UNEXPECTED;
         SQL_RESV_LOG(WARN, "unexpected branch", K(ret));
+      }
+    }
+
+    if (OB_SUCC(ret)) {
+      // An AI column must not depend on another AI column.
+      if (OB_FAIL(check_ai_column_dependencies(resolved_cols, resolved_cols_count, *allocator_))) {
+        SQL_RESV_LOG(WARN, "invalid ai column dependency", K(ret));
       }
     }
 

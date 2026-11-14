@@ -25,6 +25,7 @@
 #include "share/schema/ob_table_schema.h"
 #include "share/schema/ob_column_schema.h"
 #include "share/ob_server_struct.h"
+#include "share/ob_errno.h"
 #include "share/inner_table/ob_inner_table_schema.h"
 #include "common/mysqlclient/ob_mysql_proxy.h"
 #include "lib/string/ob_sql_string.h"
@@ -120,18 +121,19 @@ int ObAiColumnStrictRead::collect_from_select(
 static bool has_unfinished_tasks(const uint64_t table_id,
                                  const uint64_t column_id)
 {
+  int ret = OB_SUCCESS;
   bool unfinished = false;
   ObSqlString sql;
   SMART_VAR(ObMySQLProxy::MySQLResult, res)
   {
-    ObMySQLResult *result = NULL;
+    common::sqlclient::ObMySQLResult *result = NULL;
     int64_t count = 0;
     if (OB_FAIL(sql.assign_fmt("SELECT count(*) FROM %s WHERE table_id = %ld AND column_id = %ld",
                                 OB_ALL_AI_COLUMN_TASK_TNAME,
                                 static_cast<long>(table_id),
                                 static_cast<long>(column_id)))) {
       LOG_WARN("failed to build the statement of the ai column strict read", K(ret), K(sql));
-    } else if (OB_FAIL(GCTX.sql_proxy_.read(res, sql.ptr()))) {
+    } else if (OB_FAIL(GCTX.sql_proxy_->read(res, sql.ptr()))) {
       LOG_WARN("failed to read the tasks of the ai column", K(ret), K(sql));
     } else if (NULL == (result = res.get_result())) {
       ret = OB_ERR_UNEXPECTED;
@@ -139,7 +141,7 @@ static bool has_unfinished_tasks(const uint64_t table_id,
       if (OB_ITER_END != ret) {
         LOG_WARN("failed to read the tasks of the ai column", K(ret), K(sql));
       }
-    } else if (OB_FAIL(result->get_int(0, count))) {
+    } else if (OB_FAIL(result->get_int(static_cast<int64_t>(0), count))) {
       LOG_WARN("failed to read the tasks of the ai column", K(ret), K(sql));
     } else {
       unfinished = (count > 0);

@@ -29,6 +29,7 @@
 #include "share/ob_dml_sql_splicer.h"
 #include "share/inner_table/ob_inner_table_schema.h"
 #include "lib/string/ob_sql_string.h"
+#include "lib/time/ob_time_utility.h"
 #include "common/object/ob_obj_type.h"
 #include "lib/utility/utility.h"
 
@@ -40,6 +41,55 @@ using namespace share::schema;
 
 namespace sql
 {
+
+/**
+ * @brief Adapts the inner SQL connection of the session to the ObISQLClient
+ *        interface.
+ *
+ * The rows of the AI column task queue have to join the transaction of the
+ * session which invalidated the AI column, so they are written through the
+ * inner connection of that session instead of the tenant proxy.
+ */
+class ObAiColumnInnerSqlClient : public common::ObISQLClient
+{
+public:
+  explicit ObAiColumnInnerSqlClient(ObIInnerSQLConnection *conn) : conn_(conn) {}
+  virtual ~ObAiColumnInnerSqlClient() {}
+
+  virtual int escape(const char *from, const int64_t from_size, char *to,
+                     const int64_t to_size, int64_t &out_size) override
+  {
+    UNUSED(from);
+    UNUSED(from_size);
+    UNUSED(to);
+    UNUSED(to_size);
+    UNUSED(out_size);
+    return OB_NOT_SUPPORTED;
+  }
+
+  virtual int read(ReadResult &res, const char *sql, const int32_t group_id) override
+  {
+    UNUSED(res);
+    UNUSED(sql);
+    UNUSED(group_id);
+    return OB_NOT_SUPPORTED;
+  }
+
+  virtual int write(const char *sql, const int32_t group_id,
+                    int64_t &affected_rows) override
+  {
+    UNUSED(group_id);
+    if (OB_ISNULL(conn_)) {
+      return OB_NOT_INIT;
+    }
+    return conn_->execute_write(ObString(sql), affected_rows);
+  }
+
+  virtual common::sqlclient::ObISQLConnection *get_connection() override { return conn_; }
+
+private:
+  ObIInnerSQLConnection *conn_;
+};
 
 /**
  * Append the literal of one primary key value to @p condition.
@@ -54,9 +104,9 @@ static int append_pk_literal(ObSqlString &condition,
   int ret = OB_SUCCESS;
   if (datum.is_null()) {
     ret = condition.append("NULL");
-  } else if (column.get_meta_type().is_integer_type()) {
+  } else if (ob_is_integer_type(column.get_data_type())) {
     ret = condition.append_fmt("%ld", datum.get_int());
-  } else if (ob_is_string_type(column.get_meta_type())) {
+  } else if (ob_is_string_type(column.get_data_type())) {
     const ObString &value = datum.get_string();
     const char *data = value.ptr();
     const int64_t len = value.length();
@@ -87,7 +137,7 @@ static int append_pk_literal(ObSqlString &condition,
  * The column ids of the row are carried by dml_ctdef.column_ids_, which is
  * parallel to the row expressions.
  */
-static int build_rowkey_predicate(ObAllocator &allocator,
+static int build_rowkey_predicate(ObIAllocator &allocator,
                                   const ObTableSchema &table_schema,
                                   const ObDMLBaseCtDef &dml_ctdef,
                                   const ObExprPtrIArray &row,
@@ -133,7 +183,7 @@ static int build_rowkey_predicate(ObAllocator &allocator,
       ret = OB_ALLOCATE_MEMORY_FAILED;
     } else {
       MEMCPY(buf, condition.ptr(), len);
-      predicate.assign(len, buf);
+      predicate.assign(buf, len);
     }
   } else if (OB_SUCC(ret)) {
     // the row has no primary key column, the task cannot address the row
@@ -147,9 +197,14 @@ static int build_rowkey_predicate(ObAllocator &allocator,
  *
  * Every AI column of one row shares the same request id, so that the worker
  * publishes the results of the row atomically.
+ *
+ * The request id carries the moment of the change, so that a later change of
+ * the same row starts a new request group: the worker can then tell that the
+ * result of the older group is outdated.
  */
-static int build_request_id(ObAllocator &allocator,
+static int build_request_id(ObIAllocator &allocator,
                             const uint64_t table_id,
+                            const int64_t change_ts,
                             const ObString &rowkey_predicate,
                             ObString &request_id)
 {
@@ -159,14 +214,15 @@ static int build_request_id(ObAllocator &allocator,
   if (OB_ISNULL(buf = static_cast<char *>(allocator.alloc(len)))) {
     ret = OB_ALLOCATE_MEMORY_FAILED;
   } else {
-    const int64_t written = snprintf(buf, len, "%lu:%.*s",
+    const int64_t written = snprintf(buf, len, "%lu:%ld:%.*s",
                                       static_cast<unsigned long>(table_id),
+                                      change_ts,
                                       rowkey_predicate.length(),
                                       rowkey_predicate.ptr());
     if (written <= 0 || written >= len) {
       ret = OB_ERR_UNEXPECTED;
     } else {
-      request_id.assign(written, buf);
+      request_id.assign(buf, written);
     }
   }
   return ret;
@@ -175,19 +231,26 @@ static int build_request_id(ObAllocator &allocator,
 /**
  * Collect the names of the columns which an UPDATE statement changed.
  *
- * The changed columns are the ones the assignments of the statement touch;
- * the primary key is always included, because an update of the primary key
- * moves the row.
+ * The changed columns are the ones the assignments of the statement touch.
+ * An update of a primary key column moves the row, so the flag which tells
+ * that the row moved is raised as well: every AI column of the row has to be
+ * generated again, because the row itself is a new one.
  */
 static int collect_updated_columns(const ObUpdCtDef &upd_ctdef,
                                    const ObTableSchema &table_schema,
-                                   ObIArray<ObString> &changed_columns)
+                                   ObIArray<ObString> &changed_columns,
+                                   bool &rowkey_updated)
 {
   int ret = OB_SUCCESS;
   const UIntFixedArray &updated_ids = upd_ctdef.dupd_ctdef_.updated_column_ids_;
   for (int64_t i = 0; OB_SUCC(ret) && i < updated_ids.count(); ++i) {
     const ObColumnSchemaV2 *column = table_schema.get_column_schema(updated_ids.at(i));
-    if (OB_NOT_NULL(column) && OB_FAIL(changed_columns.push_back(column->get_column_name_str()))) {
+    if (OB_NOT_NULL(column)) {
+      if (column->is_rowkey_column()) {
+        rowkey_updated = true;
+      }
+      if (OB_FAIL(changed_columns.push_back(column->get_column_name_str()))) {
+      }
     }
   }
   return ret;
@@ -220,7 +283,7 @@ int ObAiColumnTaskCreator::create_tasks(ObDMLModifyRowNode &modify_row,
     const ObDmlEventType dml_event = modify_row.dml_event_;
     const ObExprPtrIArray &new_row = modify_row.dml_ctdef_->new_row_;
     const ObExprPtrIArray &old_row = modify_row.dml_ctdef_->old_row_;
-    ObAllocator &allocator = op.get_exec_ctx().get_allocator();
+    ObIAllocator &allocator = op.get_exec_ctx().get_allocator();
     ObIInnerSQLConnection *inner_conn = as_inner_sql_connection(op.get_inner_conn());
     if (OB_ISNULL(inner_conn)) {
       ret = OB_NOT_INIT;
@@ -231,21 +294,35 @@ int ObAiColumnTaskCreator::create_tasks(ObDMLModifyRowNode &modify_row,
         if (OB_NOT_SUPPORTED == ret) {
           ret = OB_SUCCESS;
         }
-      } else if (OB_FAIL(ObAiColumnTaskService::delete_tasks_by_predicate(
-                             *inner_conn, rowkey_predicate))) {
-        LOG_WARN("fail to delete the ai column tasks of a deleted row", K(ret));
+      } else {
+        ObAiColumnInnerSqlClient inner_client(inner_conn);
+        if (OB_FAIL(ObAiColumnTaskService::delete_tasks_by_predicate(
+                       inner_client, table_schema->get_table_id(), rowkey_predicate))) {
+          LOG_WARN("fail to delete the ai column tasks of a deleted row", K(ret));
+        }
       }
     } else if (t_insert == dml_event || t_update == dml_event) {
       // the AI columns which the statement invalidated are the ones whose
       // dependency changed; on an INSERT every AI column is invalidated.
       ObSEArray<const ObColumnSchemaV2 *, 4> affected_columns;
+      // the moment of the change: it identifies the generation of the value of
+      // the row, so that a later change of the same row starts a new request
+      // group and the worker can drop the result of the older one
+      const int64_t change_ts = ObTimeUtility::current_time_us();
       if (t_insert == dml_event) {
         if (OB_FAIL(affected_columns.assign(ai_columns))) {
         }
       } else {
         ObSEArray<ObString, 8> changed_columns;
+        bool rowkey_updated = false;
         const ObUpdCtDef *upd_ctdef = static_cast<const ObUpdCtDef *>(modify_row.dml_ctdef_);
-        if (OB_FAIL(collect_updated_columns(*upd_ctdef, *table_schema, changed_columns))) {
+        if (OB_FAIL(collect_updated_columns(*upd_ctdef, *table_schema, changed_columns,
+                                            rowkey_updated))) {
+        } else if (rowkey_updated) {
+          // the row moved to another primary key: it is a new row, so every AI
+          // column of it has to be generated again
+          if (OB_FAIL(affected_columns.assign(ai_columns))) {
+          }
         } else if (OB_FAIL(ObAiColumnDmlUtil::collect_affected_ai_columns(
                               *table_schema, changed_columns, affected_columns))) {
         }
@@ -261,13 +338,17 @@ int ObAiColumnTaskCreator::create_tasks(ObDMLModifyRowNode &modify_row,
       } else if (OB_SUCC(ret)
                  && OB_FAIL(build_request_id(allocator,
                                             table_schema->get_table_id(),
+                                            change_ts,
                                             rowkey_predicate, request_id))) {
       } else {
+        ObAiColumnInnerSqlClient inner_client(inner_conn);
         for (int64_t i = 0; OB_SUCC(ret) && i < affected_columns.count(); ++i) {
           const ObColumnSchemaV2 *ai_column = affected_columns.at(i);
+          const int64_t task_id = ObAiColumnTaskService::alloc_task_id(
+              table_schema->get_table_id(), ai_column->get_column_id(), request_id);
           if (OB_FAIL(ObAiColumnTaskService::insert_task(
-                         *inner_conn,
-                         /*task_id=*/0,
+                         inner_client,
+                         task_id,
                          table_schema->get_table_id(),
                          ai_column->get_column_id(),
                          request_id,
