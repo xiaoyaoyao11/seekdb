@@ -20,6 +20,7 @@
 #include "storage/tablet/ob_batch_create_tablet_arg.h"
 #include "storage/tx/ob_tx_result_struct.h"
 #include "storage/ob_storage_rpc_arg.h"
+#include "observer/ai_column/ob_ai_column_worker.h"
 #include "observer/ob_server_schema_updater.h"
 #include "share/ob_rpc_struct.h"
 #include "share/ob_share_util.h"
@@ -171,6 +172,7 @@ private:
   volatile bool stopped_;
 
   ObServerSchemaUpdater schema_updater_;
+  observer::ObAIColumnWorker ai_column_worker_;
 
   //lease
   const share::ObGlobalContext &gctx_;
