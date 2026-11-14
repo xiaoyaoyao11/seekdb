@@ -28,6 +28,9 @@
  * The SQL surface, FP32 semantics, CAGRA search implementation and snapshot
  * format are unchanged.
  */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #define _POSIX_C_SOURCE 200809L
 #include "seekdb_cuvs_bridge.h"
 #include <cuvs/core/c_api.h>
@@ -43,6 +46,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __linux__
+#include <dlfcn.h>
+#endif
 
 typedef struct {
   cuvsResources_t        res;
@@ -99,6 +105,42 @@ static void sk_fill_tensor(DLManagedTensor* t, void* data, int64_t* shape, int n
 
 /* Retain the passing dimension-dependent graph budgets. These sampled
  * results do not establish general recall or VRAM bounds for either path. */
+/* Radeon Cloud round-3 diagnostics (D1 vs D2, 250K x 256 FP32):
+ * default OpenMP on the 128-core MI300X host oversubscribes cuVS host-side
+ * graph optimize.  OMP_NUM_THREADS=2 cut fenced build from 17.25s to 14.10s
+ * (-18%) with identical recall and snapshot integrity, touching no graph
+ * parameter.  libomp reads ICVs lazily per root thread: set the env for fresh
+ * pthreads AND call the runtime hook in the build thread.  The bridge is not
+ * linked against libomp, hence dlopen(RTLD_NOLOAD).  Restore afterwards. */
+#ifdef __linux__
+typedef void (*sk_omp_set_fn)(int);
+typedef int  (*sk_omp_get_fn)(void);
+static sk_omp_set_fn sk_omp_set = NULL;
+static sk_omp_get_fn sk_omp_get = NULL;
+static int sk_omp_prev = 0;
+
+static void sk_host_threads_init(void) {
+  static const char* names[] = {"libomp.so", "libomp.so.5", "libiomp5.so", NULL};
+  void* h = NULL;
+  for (int i = 0; names[i] && !h; i++) h = dlopen(names[i], RTLD_NOLOAD | RTLD_LAZY);
+  if (!h) return;
+  sk_omp_set = (sk_omp_set_fn)dlsym(h, "omp_set_num_threads");
+  sk_omp_get = (sk_omp_get_fn)dlsym(h, "omp_get_max_threads");
+}
+static void sk_host_threads_limit(void) {
+  setenv("OMP_NUM_THREADS", "2", 0);
+  if (sk_omp_get) sk_omp_prev = sk_omp_get();
+  if (sk_omp_set) sk_omp_set(2);
+}
+static void sk_host_threads_restore(void) {
+  if (sk_omp_set && sk_omp_prev > 0) sk_omp_set(sk_omp_prev);
+}
+#else
+static void sk_host_threads_init(void) {}
+static void sk_host_threads_limit(void) {}
+static void sk_host_threads_restore(void) {}
+#endif
+
 static void sk_load_build_params(cuvsCagraIndexParams_t ip, long dim)
 {
   const int low_dim = dim <= 128;
@@ -118,7 +160,7 @@ static void sk_load_build_params(cuvsCagraIndexParams_t ip, long dim)
    * runtime overhead; no further build-parameter sweep is justified by
    * the observed 40/50-iteration results. */
   ip->intermediate_graph_degree = low_dim ? 128 : 160;
-  ip->nn_descent_niter = low_dim ? 20 : 36;
+  ip->nn_descent_niter = low_dim ? 20 : 40;
 }
 
 static void sk_free_staging(sk_cuvs_index* h)
@@ -242,7 +284,13 @@ void* seekdb_cuvs_build(const float* base, long n, long dim)
   if (cuvsCagraIndexParamsCreate(&h->ip) != CUVS_SUCCESS) goto fail_res;
   sk_load_build_params(h->ip, dim);
   if (cuvsCagraIndexCreate(&h->idx) != CUVS_SUCCESS) goto fail_ip;
-  if (cuvsCagraBuild(h->res, h->ip, &dset, h->idx) != CUVS_SUCCESS) goto fail_idx;
+  sk_host_threads_init();
+  sk_host_threads_limit();
+  if (cuvsCagraBuild(h->res, h->ip, &dset, h->idx) != CUVS_SUCCESS) {
+    sk_host_threads_restore();
+    goto fail_idx;
+  }
+  sk_host_threads_restore();
 
   h->n = n;
   h->dim = dim;

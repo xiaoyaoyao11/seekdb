@@ -209,3 +209,34 @@ not spend a contest submission.
 
 No new official result or full-score prediction is claimed.
 
+## v12: host-thread oversubscription fix (round-3 Radeon evidence)
+
+Round-3 offline diagnostics (250K x 256 FP32, real hipVS/ROCm SDK, zero
+submissions) isolated a cost that is **not** a graph parameter:
+
+| run | median fenced build | note |
+| --- | ---: | --- |
+| D1 v10, default OpenMP (128 cores) | 17.254 s | baseline |
+| D2 v10, `OMP_NUM_THREADS=2` | 14.103 s | **-18.3%**, identical recall and snapshot |
+| D3 v10, RMM pool | 16.610 s | small effect, not adopted |
+| D4 v10, `niter=1` | 4.314 s | bridge fixed cost ~4.3 s |
+
+`rocprofv3`: `nn_descent::local_join_kernel` is 73.1% of GPU kernel time and
+`cagra::kern_prune` 19.1% (a host-driven optimize phase).  The default 128-way
+host team oversubscribes that phase.  Round-3 also ruled out two other ideas:
+device-resident input gained only 2.8% (B5) and `ITERATIVE_CAGRA_SEARCH` was
+2.1x slower (B6).
+
+v12 restores the exact graph shape of the best official result (v10,
+160/40, `itopk=max(4k,512)`, `search_width=4`, `graph_degree=128`) and adds a
+build-scoped OpenMP limit: `setenv("OMP_NUM_THREADS","2",0)` for fresh
+pthreads, plus `dlopen(RTLD_NOLOAD)` -> `omp_set_num_threads(2)` in the build
+thread, restoring the previous value after `cuvsCagraBuild`.  Linux-only and
+inert elsewhere.  Strict C11 MOCK compile and control-flow regression pass in
+both include branches (`high_iterations=40`).
+
+This is a distinct, evidence-backed change from v11, which failed the official
+`hidden250k:query_regression` gate; one official test is therefore authorised.
+No full-score claim: the local 18% reduction is diluted by the harness's own
+fixed overhead, and the official score is not predicted here.
+
