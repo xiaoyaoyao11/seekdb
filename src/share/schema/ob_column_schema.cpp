@@ -287,7 +287,7 @@ int ObColumnSchemaV2::refresh_ai_column_meta()
     // from the AI expression and the type of the column.  Rebuild it, so that
     // a schema which was loaded from the inner table exposes it as well.
     ObIAllocator *allocator = get_allocator();
-    if (OB_NOTNULL(allocator)) {
+    if (!OB_ISNULL(allocator)) {
       ObString normalized_expr;
       if (OB_FAIL(ObAiColumnUtil::build_normalized_expr(*allocator, ai_column_expr_,
                                                           *this, normalized_expr))) {
@@ -296,6 +296,14 @@ int ObColumnSchemaV2::refresh_ai_column_meta()
         ai_normalized_expr_ = normalized_expr;
       }
     }
+  }
+  if (OB_SUCC(ret) && !ai_column_expr_.empty()) {
+    // The AI column flag lives in column_flags_, which is not part of the
+    // persistent description of a column.  A column which still carries an AI
+    // expression is an AI column, so restore the flag here; otherwise the
+    // column would stop being recognised as an AI column once its schema has
+    // been reloaded.
+    set_ai_column();
   }
   return ret;
 }
