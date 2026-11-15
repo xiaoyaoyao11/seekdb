@@ -376,7 +376,7 @@ int ObDDLTaskUtil::generate_build_replica_sql(const int64_t data_table_id,
     // snapshot aux tables only; SEEKDB_DDL_PX_PARALLEL overrides (<=0 keeps stock).
     if (OB_NOT_NULL(dest_table_schema) && dest_table_schema->is_vec_index_snapshot_data_type()) {
       const char *px_env = getenv("SEEKDB_DDL_PX_PARALLEL");
-      const int64_t px = OB_ISNULL(px_env) ? 16 : atoll(px_env);
+      const int64_t px = OB_ISNULL(px_env) ? 24 : atoll(px_env);
       if (px > 0) { real_parallelism = ObDDLTaskUtil::get_real_parallelism(px); }
     }
     const bool is_rowkey_doc_aux_table = dest_table_schema->is_rowkey_doc_id();
