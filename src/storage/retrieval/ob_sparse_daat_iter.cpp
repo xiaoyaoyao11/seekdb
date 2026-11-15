@@ -60,8 +60,7 @@ int ObSRMergeCmp::cmp(
     ret = OB_NOT_INIT;
   } else {
     int tmp_ret = 0;
-    if (OB_FAIL(cmp_func_(
-            get_id_datum(l.iter_idx_), get_id_datum(r.iter_idx_), tmp_ret, nullptr))) {
+    if (OB_FAIL(compare_ids(get_id_datum(l.iter_idx_), get_id_datum(r.iter_idx_), tmp_ret))) {
     } else {
       cmp_ret = tmp_ret;
     }
@@ -90,7 +89,8 @@ int ObSRDaaTIterImpl::init(
     ObSparseRetrievalMergeParam &iter_param,
     ObIArray<ObISRDaaTDimIter *> &dim_iters,
     ObIAllocator &iter_allocator,
-    ObSRDaaTRelevanceCollector &relevance_collector)
+    ObSRDaaTRelevanceCollector &relevance_collector,
+    const bool need_merge_heap)
 {
   int ret = OB_SUCCESS;
   if (IS_INIT) {
@@ -124,7 +124,7 @@ int ObSRDaaTIterImpl::init(
     } else if (OB_FAIL(buffered_relevances_.init(max_batch_size))) {
     } else if (OB_FAIL(buffered_relevances_.prepare_allocate(max_batch_size))) {
     } else if (OB_FAIL(merge_cmp_.init(iter_param_->id_proj_expr_->datum_meta_, &iter_domain_ids_))) {
-    } else if (OB_FAIL(init_merge_heap(dim_iters_->count()))) {
+    } else if (need_merge_heap && OB_FAIL(init_merge_heap(dim_iters_->count()))) {
     } else {
       for (int64_t i = 0; i < dim_iters.count(); ++i) {
         next_round_iter_idxes_[i] = i;
@@ -263,7 +263,8 @@ int ObSRDaaTIterImpl::do_one_merge_round(int64_t &count)
     if (OB_UNLIKELY(OB_ITER_END != ret)) {
     }
   } else if (OB_FAIL(collect_dims_by_id(id_datum, relevance, need_project))) {
-  } else if (need_project && OB_FAIL(filter_on_demand(count, relevance, need_project))) {
+  } else if (need_project && iter_param_->need_filter()
+             && OB_FAIL(filter_on_demand(count, relevance, need_project))) {
   } else if (need_project && OB_FAIL(cache_result(count, *id_datum, relevance))) {
     if (OB_ITER_END != ret) {
     }
@@ -417,22 +418,28 @@ int ObSRDaaTIterImpl::project_results(const int64_t count)
 
   if (eval_ctx->is_vectorized()) {
     sql::ObBitVector &id_evaluated_flags = id_proj_expr->get_evaluated_flags(*eval_ctx);
+    ObDatumVector id_datums;
+    id_datums.set_batch(id_proj_expr->is_batch_result());
+    id_datums.datums_ = id_proj_expr->locate_datums_for_update(
+        *eval_ctx, id_datums.is_batch() ? count : 1);
+    const ObDocIdExt *ids = buffered_domain_ids_.get_data();
     for (int64_t i = 0; i < count; ++i) {
-      guard.set_batch_idx(i);
-      ObDatum &id_proj_datum = id_proj_expr->locate_datum_for_write(*eval_ctx);
-      set_datum_func_(id_proj_datum, buffered_domain_ids_[i]);
-      id_evaluated_flags.set(i);
-      id_proj_expr->set_evaluated_projected(*eval_ctx);
+      set_datum_func_(*id_datums.at(i), ids[i]);
     }
+    id_evaluated_flags.set_all(count);
+    id_proj_expr->set_evaluated_projected(*eval_ctx);
     if (iter_param_->need_project_relevance()) {
       sql::ObBitVector &relevance_evaluated_flags = relevance_proj_expr->get_evaluated_flags(*eval_ctx);
+      ObDatumVector relevance_datums;
+      relevance_datums.set_batch(relevance_proj_expr->is_batch_result());
+      relevance_datums.datums_ = relevance_proj_expr->locate_datums_for_update(
+          *eval_ctx, relevance_datums.is_batch() ? count : 1);
+      const double *relevances = buffered_relevances_.get_data();
       for (int64_t i = 0; i < count; ++i) {
-        guard.set_batch_idx(i);
-        ObDatum &relevance_proj_datum = relevance_proj_expr->locate_datum_for_write(*eval_ctx);
-        relevance_proj_datum.set_double(buffered_relevances_[i]);
-        relevance_evaluated_flags.set(i);
-        relevance_proj_expr->set_evaluated_projected(*eval_ctx);
+        relevance_datums.at(i)->set_double(relevances[i]);
       }
+      relevance_evaluated_flags.set_all(count);
+      relevance_proj_expr->set_evaluated_projected(*eval_ctx);
     }
   } else if (OB_UNLIKELY(1 != count)) {
     ret = OB_ERR_UNEXPECTED;
