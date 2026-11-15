@@ -40,18 +40,16 @@ def stop_server(port):
     try:
         with open(pid_path, "r", encoding="ascii") as stream:
             pid = int(stream.read().strip())
-        os.kill(pid, signal.SIGTERM)
-        for _ in range(50):
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
-                break
-            time.sleep(0.02)
-    except (ValueError, ProcessLookupError):
+        if os.name == "nt":
+            subprocess.call(["taskkill", "/PID", str(pid), "/T", "/F"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            os.kill(pid, signal.SIGTERM)
+    except (ValueError, ProcessLookupError, OSError):
         pass
     try:
         os.unlink(pid_path)
-    except FileNotFoundError:
+    except OSError:
         pass
 
 
@@ -62,13 +60,15 @@ def start_server(port):
         with open(state_path(port, name), "w", encoding="utf-8"):
             pass
     output = open(state_path(port, "server.out"), "a", encoding="utf-8")
+    kwargs = {}
+    if os.name != "nt":
+        kwargs["start_new_session"] = True
     process = subprocess.Popen(
         [sys.executable, os.path.abspath(__file__), "serve", str(port)],
         stdin=subprocess.DEVNULL,
         stdout=output,
         stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
+        **kwargs)
     with open(state_path(port, "server.pid"), "w", encoding="ascii") as stream:
         stream.write(str(process.pid))
     for _ in range(100):
