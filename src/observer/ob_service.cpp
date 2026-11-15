@@ -22,6 +22,7 @@
 #include "lib/stat/ob_diagnostic_info_guard.h"
 #include "lib/time/ob_time_utility.h"
 #include "ob_service.h"
+#include "observer/ai_column/ob_ai_column_worker.h"
 #include "storage/ob_storage_rpc_arg.h"
 #include "share/rc/ob_server_runtime.h"
 #include "share/ob_telemetry.h"
@@ -200,6 +201,12 @@ int ObService::init(common::ObMySQLProxy &sql_proxy)
   } else if (OB_FAIL(schema_release_task_.init(schema_updater_))) {
     FLOG_WARN("init schema release task failed", KR(ret));
   } else {
+    // The ai column worker only serves async ai columns, so a failure to init it
+    // must not turn into an ob_service (and therefore instance) start failure.
+    int tmp_ret = ai_column_worker_.init(&sql_proxy);
+    if (OB_SUCCESS != tmp_ret) {
+      FLOG_WARN("init ai column worker failed", K(tmp_ret));
+    }
     inited_ = true;
   }
   FLOG_INFO("[OBSERVICE_NOTICE] init ob_service finish", KR(ret), K_(inited));
@@ -216,6 +223,13 @@ int ObService::start()
   if (!inited_) {
     ret = OB_NOT_INIT;
     FLOG_WARN("ob_service is not inited", KR(ret), K_(inited));
+  } else {
+    // The ai column worker only serves async ai columns. A failure to start it
+    // must not prevent the server from starting.
+    int tmp_ret = ai_column_worker_.start();
+    if (OB_SUCCESS != tmp_ret) {
+      FLOG_WARN("start ai column worker failed", K(tmp_ret));
+    }
   }
   FLOG_INFO("[OBSERVICE_NOTICE] start ob_service end", KR(ret));
   if (OB_FAIL(ret)) {
@@ -283,6 +297,8 @@ int ObService::destroy()
     FLOG_INFO("begin to destroy schema updater");
     schema_updater_.destroy();
     FLOG_INFO("schema updater destroyed");
+    ai_column_worker_.destroy();
+    FLOG_INFO("ai column worker destroyed");
 
   }
   FLOG_INFO("[OBSERVICE_NOTICE] destroy ob_service end", KR(ret));

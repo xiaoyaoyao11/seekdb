@@ -101,6 +101,20 @@ create table ai_column_p0_ddl.bad_dependency(
   second_ai varchar(200) AI COLUMN (AI_COMPLETE('p0_ddl_complete', first_ai))
 );
 
+-- SHOW AI COLUMNS reports the AI columns of a table.
+show ai columns from ai_column_p0_ddl.docs;
+
+-- The LIKE variant filters the reported columns.
+show ai columns from ai_column_p0_ddl.docs like 'emb';
+
+-- A table without AI columns reports no rows.
+create table ai_column_p0_ddl.plain_docs(id bigint primary key, content varchar(20));
+show ai columns from ai_column_p0_ddl.plain_docs;
+drop table ai_column_p0_ddl.plain_docs;
+
+--error 1146
+show ai columns from ai_column_p0_ddl.no_such_table;
+
 drop table ai_column_p0_ddl.alter_docs;
 drop table ai_column_p0_ddl.docs;
 call DBMS_AI_SERVICE.DROP_AI_MODEL_ENDPOINT('p0_ddl_complete_ep');

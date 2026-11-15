@@ -1206,6 +1206,8 @@ public:
   inline int64_t get_virtual_column_cnt() const { return virtual_column_cnt_; }
   inline const_column_iterator column_begin() const { return column_array_; }
   inline const_column_iterator column_end() const { return NULL == column_array_ ? NULL : &(column_array_[column_cnt_]); }
+  // true if the table has at least one AI column (asynchronously generated).
+  bool has_ai_column() const;
   inline const_constraint_iterator constraint_begin() const { return cst_array_; }
   inline const_constraint_iterator constraint_end() const { return NULL == cst_array_ ? NULL : &(cst_array_[cst_cnt_]); }
   inline constraint_iterator constraint_begin_for_non_const_iter() const { return cst_array_; }

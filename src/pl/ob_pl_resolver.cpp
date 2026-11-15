@@ -2761,6 +2761,7 @@ int ObPLResolver::check_and_record_stmt_type(ObPLFunctionAST &func,
     case stmt::T_SELECT:
     case stmt::T_EXPLAIN:
     case stmt::T_SHOW_COLUMNS:
+    case stmt::T_SHOW_AI_COLUMNS:
     case stmt::T_SHOW_TABLES:
     case stmt::T_SHOW_DATABASES:
     case stmt::T_SHOW_TABLE_STATUS:

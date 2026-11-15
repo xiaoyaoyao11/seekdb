@@ -1107,6 +1107,7 @@ int ObMPQuery::is_readonly_stmt(ObMySQLResultSet &result, bool &is_readonly)
     case stmt::T_SHOW_TABLES:
     case stmt::T_SHOW_DATABASES:
     case stmt::T_SHOW_COLUMNS:
+    case stmt::T_SHOW_AI_COLUMNS:
     case stmt::T_SHOW_VARIABLES:
     case stmt::T_SHOW_TABLE_STATUS:
     case stmt::T_SHOW_SCHEMA:

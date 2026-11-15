@@ -36,6 +36,7 @@ namespace share
 enum CS_PLUGIN_TYPE
 {
   CS_PLUGIN_ASYNC_INDEX = 0,
+  CS_PLUGIN_AI_COLUMN = 1,
   CS_PLUGIN_MAX_TYPE           // Must equal CS_MAX_PLUGIN_COUNT in ob_change_stream_dispatcher.h
 };
 
