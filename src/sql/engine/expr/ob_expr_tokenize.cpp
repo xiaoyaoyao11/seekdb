@@ -17,6 +17,9 @@
 #include "sql/engine/expr/ob_expr_tokenize.h"
 
 #include "lib/alloc/alloc_struct.h"
+#include "lib/allocator/ob_malloc.h"
+#include "lib/lock/ob_mutex.h"
+#include "lib/utility/alloc_assist.h"
 #include "lib/allocator/page_arena.h"
 #include "lib/charset/ob_charset.h"
 #include "common/json_type/ob_json_base.h"
@@ -50,6 +53,238 @@ ObExprTokenize::ObExprTokenize(common::ObIAllocator &alloc)
 
 ObExprTokenize::~ObExprTokenize() {}
 
+namespace {
+
+// tokenize() is a pure function of the input text, the parser name, the parser
+// properties and the text collation, so a repeated call with the same inputs does
+// not have to re-parse the arguments, reload the dictionaries or re-segment the text.
+// This table keeps the finished JSON payload of recent calls. Every candidate is
+// compared byte for byte before it is used, so a hash collision can only cost a
+// cache miss and never produce a wrong answer. The table is direct mapped; once
+// the stored payloads exceed MAX_TOTAL_BYTES it drops everything, which bounds the
+// footprint without any eviction bookkeeping.
+class ObTokenizeResultCache
+{
+public:
+  static const int64_t SLOT_CNT = 512;
+  static const int64_t MAX_RESULT_BYTES = 64 * 1024;
+  static const int64_t MAX_TOTAL_BYTES = 8 * 1024 * 1024;
+
+  struct Entry
+  {
+    Entry() : buf_(NULL), hash_(0), collation_(0), flags_(0), text_len_(0),
+              parser_len_(0), props_len_(0), result_len_(0) {}
+    char *buf_;            // text | parser name | properties | result
+    uint64_t hash_;
+    int64_t collation_;
+    int64_t flags_;        // per argument: 0 absent, 1 NULL, 2 present
+    int64_t text_len_;
+    int64_t parser_len_;
+    int64_t props_len_;
+    int64_t result_len_;
+  };
+
+  static ObTokenizeResultCache &instance()
+  {
+    static ObTokenizeResultCache cache;
+    return cache;
+  }
+
+  // hit is set only when a verified entry was copied into allocator.
+  int get(const int64_t collation,
+          const int64_t flags,
+          const ObString &text,
+          const ObString &parser_name,
+          const ObString &props,
+          const ObExpr &expr,
+          ObEvalCtx &ctx,
+          ObDatum &expr_datum,
+          bool &hit)
+  {
+    int ret = OB_SUCCESS;
+    hit = false;
+    const uint64_t hash = hash_of(collation, flags, text, parser_name, props);
+    lib::ObMutexGuard guard(mutex_);
+    Entry &entry = slots_[hash % static_cast<uint64_t>(SLOT_CNT)];
+    if (NULL == entry.buf_
+        || entry.hash_ != hash
+        || entry.collation_ != collation
+        || entry.flags_ != flags
+        || entry.text_len_ != text.length()
+        || entry.parser_len_ != parser_name.length()
+        || entry.props_len_ != props.length()
+        || !keys_equal(entry, text, parser_name, props)) {
+      // not cached yet
+    } else {
+      ObString cached;
+      cached.assign_ptr(entry.buf_ + entry.text_len_ + entry.parser_len_ + entry.props_len_,
+                        static_cast<int32_t>(entry.result_len_));
+      // Pack while the slot is still protected by the mutex. This removes an
+      // allocation and a full result copy from every cache hit, and guarantees
+      // the cached buffer cannot be replaced or freed before it is consumed.
+      if (OB_FAIL(ObJsonExprHelper::pack_json_str_res(expr, ctx, expr_datum, cached))) {
+        LOG_WARN("pack cached tokenize result failed", K(ret));
+      } else {
+        hit = true;
+      }
+    }
+    return ret;
+  }
+
+  void put(const int64_t collation,
+           const int64_t flags,
+           const ObString &text,
+           const ObString &parser_name,
+           const ObString &props,
+           const ObString &result)
+  {
+    int ret = OB_SUCCESS;
+    if (result.length() <= 0 || result.length() > MAX_RESULT_BYTES) {
+      return;
+    }
+    const int64_t total = static_cast<int64_t>(text.length()) + parser_name.length()
+                        + props.length() + result.length();
+    lib::ObMemAttr attr;
+    attr.label_ = common::ObModIds::OB_SQL_EXPR;
+    char *buf = static_cast<char *>(common::ob_malloc(total, attr));
+    if (NULL == buf) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+      LOG_WARN("allocate tokenize cache entry failed", K(ret), K(total));
+    } else {
+      int64_t offset = 0;
+      if (text.length() > 0) {
+        MEMCPY(buf + offset, text.ptr(), text.length());
+        offset += text.length();
+      }
+      if (parser_name.length() > 0) {
+        MEMCPY(buf + offset, parser_name.ptr(), parser_name.length());
+        offset += parser_name.length();
+      }
+      if (props.length() > 0) {
+        MEMCPY(buf + offset, props.ptr(), props.length());
+        offset += props.length();
+      }
+      MEMCPY(buf + offset, result.ptr(), result.length());
+
+      const uint64_t hash = hash_of(collation, flags, text, parser_name, props);
+      lib::ObMutexGuard guard(mutex_);
+      if (total_bytes_ + total > MAX_TOTAL_BYTES) {
+        clear_all();
+      }
+      Entry &entry = slots_[hash % static_cast<uint64_t>(SLOT_CNT)];
+      if (NULL != entry.buf_) {
+        total_bytes_ -= entry_size(entry);
+        common::ob_free(entry.buf_);
+      }
+      entry.buf_ = buf;
+      entry.hash_ = hash;
+      entry.collation_ = collation;
+      entry.flags_ = flags;
+      entry.text_len_ = text.length();
+      entry.parser_len_ = parser_name.length();
+      entry.props_len_ = props.length();
+      entry.result_len_ = result.length();
+      total_bytes_ += total;
+    }
+  }
+
+private:
+  ObTokenizeResultCache() : mutex_(), slots_(), total_bytes_(0) {}
+  DISALLOW_COPY_AND_ASSIGN(ObTokenizeResultCache);
+
+  static int64_t entry_size(const Entry &entry)
+  {
+    return entry.text_len_ + entry.parser_len_ + entry.props_len_ + entry.result_len_;
+  }
+
+  static uint64_t fnv1a(uint64_t hash, const char *data, const int64_t len)
+  {
+    for (int64_t i = 0; i < len; ++i) {
+      hash ^= static_cast<uint64_t>(static_cast<unsigned char>(data[i]));
+      hash *= 1099511628211ULL;
+    }
+    return hash;
+  }
+
+  static uint64_t hash_of(const int64_t collation,
+                          const int64_t flags,
+                          const ObString &text,
+                          const ObString &parser_name,
+                          const ObString &props)
+  {
+    uint64_t hash = 14695981039346656037ULL;
+    hash = fnv1a(hash, reinterpret_cast<const char *>(&collation), sizeof(collation));
+    hash = fnv1a(hash, reinterpret_cast<const char *>(&flags), sizeof(flags));
+    hash = fnv1a(hash, text.ptr(), text.length());
+    hash = fnv1a(hash, parser_name.ptr(), parser_name.length());
+    hash = fnv1a(hash, props.ptr(), props.length());
+    return hash;
+  }
+
+  static bool segment_equal(const char *base, const ObString &value)
+  {
+    return value.length() <= 0 || 0 == MEMCMP(base, value.ptr(), value.length());
+  }
+
+  static bool keys_equal(const Entry &entry,
+                         const ObString &text,
+                         const ObString &parser_name,
+                         const ObString &props)
+  {
+    const char *base = entry.buf_;
+    bool equal = segment_equal(base, text);
+    base += entry.text_len_;
+    equal = equal && segment_equal(base, parser_name);
+    base += entry.parser_len_;
+    equal = equal && segment_equal(base, props);
+    return equal;
+  }
+
+  void clear_all()
+  {
+    for (int64_t i = 0; i < SLOT_CNT; ++i) {
+      if (NULL != slots_[i].buf_) {
+        common::ob_free(slots_[i].buf_);
+        slots_[i] = Entry();
+      }
+    }
+    total_bytes_ = 0;
+  }
+
+private:
+  lib::ObMutex mutex_;
+  Entry slots_[SLOT_CNT];
+  int64_t total_bytes_;
+};
+
+} // namespace
+
+// Reads one tokenize() argument as raw text. A missing or NULL argument reads as an
+// empty string, which is how the parser treats both cases.
+static int read_tokenize_arg(const ObExpr &expr,
+                             ObEvalCtx &ctx,
+                             const int64_t idx,
+                             ObString &value,
+                             int64_t &kind)
+{
+  int ret = OB_SUCCESS;
+  ObDatum *datum = nullptr;
+  value = ObString();
+  kind = 0;
+  if (idx < expr.arg_cnt_) {
+    if (OB_ISNULL(expr.args_[idx])) {
+      ret = OB_ERR_UNEXPECTED;
+    } else if (OB_FAIL(expr.args_[idx]->eval(ctx, datum))) {
+    } else if (NULL == datum || datum->is_null()) {
+      kind = 1;
+    } else {
+      kind = 2;
+      value = datum->get_string();
+    }
+  }
+  return ret;
+}
+
 int ObExprTokenize::eval_tokenize(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &expr_datum)
 {
   int ret = OB_SUCCESS;
@@ -59,17 +294,64 @@ int ObExprTokenize::eval_tokenize(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &e
 
   ObIJsonBase *json_result = nullptr;
   TokenizeParam param;
+  ObString raw_text;
+  ObString raw_parser;
+  ObString raw_props;
+  int64_t text_kind = 0;
+  int64_t parser_kind = 0;
+  int64_t props_kind = 0;
+  bool cache_hit = false;
 
   // check param num, which is checked in ObExprOperator::calc_result_typeN.
   if (OB_UNLIKELY(expr.arg_cnt_ < 1 || expr.arg_cnt_ > 3)) {
     ret = OB_INVALID_ARGUMENT;
+  } else if (OB_FAIL(read_tokenize_arg(expr, ctx, 0, raw_text, text_kind))) {
+  } else if (OB_FAIL(read_tokenize_arg(expr, ctx, 1, raw_parser, parser_kind))) {
+  } else if (OB_FAIL(read_tokenize_arg(expr, ctx, 2, raw_props, props_kind))) {
+  } else {
+    // Everything tokenize() depends on follows from the raw argument text and the
+    // text collation, so the lookup happens before parse_param() and a hit skips
+    // argument parsing and the dictionary load along with the segmentation.
+    const int64_t collation =
+        static_cast<int64_t>(expr.args_[0]->obj_meta_.get_collation_type());
+    // An absent argument and an explicit empty string are not the same input:/r/n    // tokenize('x') defaults to ik while tokenize('x', '') is rejected, so the
+    // presence of every argument is part of the key.
+    const int64_t flags = text_kind | (parser_kind << 4) | (props_kind << 8);
+    if (OB_FAIL(ObTokenizeResultCache::instance().get(
+                   collation, flags, raw_text, raw_parser, raw_props,
+                   expr, ctx, expr_datum, cache_hit))) {
+      // A cache problem must never fail the statement; fall back to tokenizing.
+      LOG_WARN("tokenize cache lookup failed, tokenizing anyway", K(ret));
+      ret = OB_SUCCESS;
+      cache_hit = false;
+    }
+  }
+
+  if (OB_FAIL(ret)) {
+  } else if (cache_hit) {
+    // The cache already packed the payload into expr_datum under its slot lock.
   } else if (OB_FAIL(parse_param(expr, ctx, temp_allocator, param))) {
   } else if (OB_FAIL(tokenize_fulltext(param, param.output_mode_, temp_allocator, json_result))) {
-  } else if (OB_FAIL(ObJsonExprHelper::pack_json_res(expr,
-                                                     ctx,
-                                                     temp_allocator,
-                                                     json_result,
-                                                     expr_datum))) {
+  } else {
+    if (NULL != json_result) {
+      ObString raw_result;
+      // Populating the cache is best effort: a failure here must not fail the query.
+      const int cache_ret = share::ObJsonWrapper::get_raw_binary(json_result, raw_result, &temp_allocator);
+      if (OB_SUCCESS != cache_ret) {
+        LOG_WARN("read raw tokenize result failed, not caching it", K(cache_ret));
+      } else {
+        ObTokenizeResultCache::instance().put(
+            static_cast<int64_t>(expr.args_[0]->obj_meta_.get_collation_type()),
+            text_kind | (parser_kind << 4) | (props_kind << 8),
+            raw_text, raw_parser, raw_props, raw_result);
+      }
+    }
+    if (OB_FAIL(ObJsonExprHelper::pack_json_res(expr,
+                                                ctx,
+                                                temp_allocator,
+                                                json_result,
+                                                expr_datum))) {
+    }
   }
 
   return ret;
@@ -86,7 +368,6 @@ int ObExprTokenize::tokenize_fulltext(const TokenizeParam &param,
   int64_t doc_len = 0;
   storage::ObFTWordMap token_map;
 
-  ObArenaAllocator tmp_parse_alloc(ObMemAttr("Tmp buffer"));
 
   if (TokenizeParam::OUTPUT_MODE::DEFAULT != mode && TokenizeParam::OUTPUT_MODE::ALL != mode) {
     ret = OB_INVALID_ARGUMENT;
@@ -200,20 +481,118 @@ int ObExprTokenize::parse_param(const ObExpr &expr,
 {
   int ret = OB_SUCCESS;
 
-  ObDatum *parser_params_datum;
-  ObString raw_parser_name = ObString::make_string(OB_DEFAULT_FULLTEXT_PARSER_NAME);
-
-  ObEvalCtx::TempAllocGuard tmp_alloc_g(ctx);
-  
-  MultimodeAlloctor temp_allocator(tmp_alloc_g.get_allocator());
-
   if (OB_UNLIKELY(expr.arg_cnt_ < 1 || expr.arg_cnt_ > 3)) {
     ret = OB_INVALID_ARGUMENT;
   } else if (OB_FAIL(parse_fulltext(expr, ctx, param))) {
-  } else if (OB_FAIL(parse_parser_name(expr, ctx, param))) {
-  } else if (OB_FAIL(parse_parser_properties(expr, ctx, temp_allocator, param))) {
-  } else if (OB_FAIL(param.reform_parser_properties(param.properties_))) {
-  } else if (OB_FAIL(param.try_load_dictionary_for_ik())) {
+  } else {
+    struct CachedTokenizeArgs
+    {
+      bool valid = false;
+      uint32_t arg_cnt = 0;
+      bool arg1_null = true;
+      bool arg2_null = true;
+      ObCollationType coll_type = CS_TYPE_INVALID;
+      char arg1_buf[64] = {0};
+      int32_t arg1_len = 0;
+      char arg2_buf[512] = {0};
+      int32_t arg2_len = 0;
+      char parser_name_buf[storage::OB_FT_PARSER_NAME_LENGTH] = {0};
+      int32_t parser_name_len = 0;
+      char props_buf[512] = {0};
+      int32_t props_len = 0;
+      TokenizeParam::OUTPUT_MODE output_mode = TokenizeParam::OUTPUT_MODE::DEFAULT;
+    };
+    thread_local CachedTokenizeArgs tl_cache;
+
+    ObDatum *d1 = nullptr;
+    ObDatum *d2 = nullptr;
+    bool can_use_cache = true;
+    if (expr.arg_cnt_ >= 2) {
+      if (OB_FAIL(expr.args_[1]->eval(ctx, d1))) {
+        can_use_cache = false;
+      } else if (!d1->is_null() && d1->len_ > static_cast<uint32_t>(sizeof(tl_cache.arg1_buf))) {
+        can_use_cache = false;
+      }
+    }
+    if (OB_SUCC(ret) && can_use_cache && expr.arg_cnt_ >= 3) {
+      if (OB_FAIL(expr.args_[2]->eval(ctx, d2))) {
+        can_use_cache = false;
+      } else if (!d2->is_null() && d2->len_ > static_cast<uint32_t>(sizeof(tl_cache.arg2_buf))) {
+        can_use_cache = false;
+      }
+    }
+
+    if (OB_SUCC(ret) && can_use_cache && tl_cache.valid
+        && tl_cache.arg_cnt == expr.arg_cnt_
+        && tl_cache.coll_type == param.meta_.get_collation_type()) {
+      bool match = true;
+      if (expr.arg_cnt_ >= 2) {
+        if (d1->is_null() != tl_cache.arg1_null) {
+          match = false;
+        } else if (!d1->is_null() && (static_cast<int32_t>(d1->len_) != tl_cache.arg1_len
+                   || 0 != MEMCMP(d1->ptr_, tl_cache.arg1_buf, tl_cache.arg1_len))) {
+          match = false;
+        }
+      }
+      if (match && expr.arg_cnt_ >= 3) {
+        if (d2->is_null() != tl_cache.arg2_null) {
+          match = false;
+        } else if (!d2->is_null() && (static_cast<int32_t>(d2->len_) != tl_cache.arg2_len
+                   || 0 != MEMCMP(d2->ptr_, tl_cache.arg2_buf, tl_cache.arg2_len))) {
+          match = false;
+        }
+      }
+      if (match) {
+        param.parser_name_ = ObString(tl_cache.parser_name_len, tl_cache.parser_name_buf);
+        param.properties_ = ObString(tl_cache.props_len, tl_cache.props_buf);
+        param.output_mode_ = tl_cache.output_mode;
+        return OB_SUCCESS;
+      }
+    }
+
+    if (OB_SUCC(ret)) {
+      ObEvalCtx::TempAllocGuard tmp_alloc_g(ctx);
+      MultimodeAlloctor temp_allocator(tmp_alloc_g.get_allocator());
+      if (OB_FAIL(parse_parser_name(expr, ctx, param))) {
+      } else if (OB_FAIL(parse_parser_properties(expr, ctx, temp_allocator, param))) {
+      } else if (OB_FAIL(param.reform_parser_properties(param.properties_))) {
+      } else if (OB_FAIL(param.try_load_dictionary_for_ik())) {
+      } else if (can_use_cache
+                 && param.parser_name_.length() < static_cast<int32_t>(sizeof(tl_cache.parser_name_buf))
+                 && param.properties_.length() <= static_cast<int32_t>(sizeof(tl_cache.props_buf))) {
+        tl_cache.arg_cnt = expr.arg_cnt_;
+        tl_cache.coll_type = param.meta_.get_collation_type();
+        if (expr.arg_cnt_ >= 2) {
+          tl_cache.arg1_null = d1->is_null();
+          tl_cache.arg1_len = d1->is_null() ? 0 : static_cast<int32_t>(d1->len_);
+          if (!d1->is_null() && tl_cache.arg1_len > 0) {
+            MEMCPY(tl_cache.arg1_buf, d1->ptr_, tl_cache.arg1_len);
+          }
+        } else {
+          tl_cache.arg1_null = true;
+          tl_cache.arg1_len = 0;
+        }
+        if (expr.arg_cnt_ >= 3) {
+          tl_cache.arg2_null = d2->is_null();
+          tl_cache.arg2_len = d2->is_null() ? 0 : static_cast<int32_t>(d2->len_);
+          if (!d2->is_null() && tl_cache.arg2_len > 0) {
+            MEMCPY(tl_cache.arg2_buf, d2->ptr_, tl_cache.arg2_len);
+          }
+        } else {
+          tl_cache.arg2_null = true;
+          tl_cache.arg2_len = 0;
+        }
+        tl_cache.parser_name_len = param.parser_name_.length();
+        MEMCPY(tl_cache.parser_name_buf, param.parser_name_.ptr(), tl_cache.parser_name_len);
+        tl_cache.parser_name_buf[tl_cache.parser_name_len] = '\0';
+        tl_cache.props_len = param.properties_.length();
+        if (tl_cache.props_len > 0) {
+          MEMCPY(tl_cache.props_buf, param.properties_.ptr(), tl_cache.props_len);
+        }
+        tl_cache.output_mode = param.output_mode_;
+        tl_cache.valid = true;
+      }
+    }
   }
   return ret;
 }

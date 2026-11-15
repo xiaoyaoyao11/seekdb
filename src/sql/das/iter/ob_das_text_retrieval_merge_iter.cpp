@@ -135,7 +135,12 @@ int ObDASTextRetrievalMergeIter::rescan()
   if (0 == query_tokens_.count()) {
   } else {
     next_written_idx_ = 0;
-    limit_param_ = ir_rtdef_->get_inv_idx_scan_rtdef()->limit_param_;
+    // 检索层的限额走独立通道 retrieval_limit_param_（见 ObDASIRScanRtDef 的说明）：
+    // 它只作用于检索迭代器的早停，不会下推到 storage 去截断倒排 posting list。
+    limit_param_ = (nullptr != ir_ctdef_->search_text_
+                    && ir_rtdef_->retrieval_limit_param_.is_valid())
+                   ? ir_rtdef_->retrieval_limit_param_
+                   : ir_rtdef_->get_inv_idx_scan_rtdef()->limit_param_;
   }
   return ret;
 }
@@ -239,7 +244,8 @@ int ObDASTextRetrievalMergeIter::build_query_tokens(const ObDASIRScanCtDef *ir_c
     storage::ObFTParseHelper tokenize_helper;
     common::ObSEArray<ObFTWord, 16> tokens;
     hash::ObHashMap<ObFTWord, int64_t> token_map;
-    const int64_t ft_word_bkt_cnt = MAX(search_text_string.length() / 10, 2);
+    const int64_t ft_word_bkt_cnt = storage::ob_ft_word_bucket_num(
+        search_text_string.length(), storage::OB_FT_QUERY_WORD_MAX_BUCKET_NUM);
     if (OB_FAIL(tokenize_helper.init(&alloc, parser_name, parser_properties))) {
     } else if (OB_FAIL(token_map.create(ft_word_bkt_cnt, common::ObMemAttr("FTWordMap")))) {
     } else if (OB_FAIL(tokenize_helper.segment(
@@ -345,7 +351,12 @@ int ObDASTextRetrievalMergeIter::inner_init(ObDASIterParam &param)
       } else if (OB_FAIL(cache_doc_ids_.init(size))) {
       } else if (OB_FAIL(cache_doc_ids_.prepare_allocate(size))) {
       } else {
-        limit_param_ = ir_rtdef_->get_inv_idx_scan_rtdef()->limit_param_;
+        // 检索层的限额走独立通道 retrieval_limit_param_（见 ObDASIRScanRtDef 的说明）：
+        // 它只作用于检索迭代器的早停，不会下推到 storage 去截断倒排 posting list。
+        limit_param_ = (nullptr != ir_ctdef_->search_text_
+                        && ir_rtdef_->retrieval_limit_param_.is_valid())
+                       ? ir_rtdef_->retrieval_limit_param_
+                       : ir_rtdef_->get_inv_idx_scan_rtdef()->limit_param_;
       }
       if (OB_FAIL(ret)) {
       } else if (force_return_docid_) {
