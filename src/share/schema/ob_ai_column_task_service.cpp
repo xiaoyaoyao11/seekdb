@@ -19,7 +19,8 @@
 #include "share/schema/ob_ai_column_task_service.h"
 #include "share/ob_dml_sql_splicer.h"
 #include "share/inner_table/ob_inner_table_schema.h"
-#include "lib/object/ob_object.h"
+#include "common/object/ob_object.h"
+#include "lib/time/ob_time_utility.h"
 #include "common/mysqlclient/ob_isql_client.h"
 
 namespace oceanbase
@@ -28,6 +29,37 @@ namespace share
 {
 namespace schema
 {
+
+int64_t ObAiColumnTaskService::alloc_task_id(const int64_t table_id,
+                                           const int64_t column_id,
+                                           const common::ObString &request_id)
+{
+  // The id of a task has to be unique inside the tenant: the queue is keyed
+  // by it and several tasks of the same row (one per AI column) coexist.
+  //
+  // The id is built from the identity of the task (the table, the column and
+  // the request group), from the current time and from a per process counter,
+  // and it is mixed with a 64 bit hash, so that two servers of the same
+  // tenant which create a task at the same moment do not use the same id.
+  static int64_t seq = 0;
+  const int64_t counter = __sync_add_and_fetch(&seq, 1);
+  uint64_t hash = 1469598103934665603ULL; // the offset basis of FNV-1a
+  hash ^= static_cast<uint64_t>(table_id);
+  hash *= 1099511628211ULL;
+  hash ^= static_cast<uint64_t>(column_id);
+  hash *= 1099511628211ULL;
+  hash ^= static_cast<uint64_t>(counter);
+  hash *= 1099511628211ULL;
+  hash ^= static_cast<uint64_t>(ObTimeUtility::current_time_us());
+  hash *= 1099511628211ULL;
+  for (int64_t i = 0; i < request_id.length(); ++i) {
+    hash ^= static_cast<uint64_t>(static_cast<unsigned char>(request_id.ptr()[i]));
+    hash *= 1099511628211ULL;
+  }
+  // the id must be positive, the value 0 is not used
+  const int64_t task_id = static_cast<int64_t>(hash & 0x7FFFFFFFFFFFFFFFULL);
+  return (0 == task_id) ? 1 : task_id;
+}
 
 int ObAiColumnTaskService::insert_task(common::ObISQLClient &sql_client,
                                         const int64_t task_id,
@@ -99,6 +131,7 @@ int ObAiColumnTaskService::delete_tasks(common::ObISQLClient &sql_client,
 }
 
 int ObAiColumnTaskService::delete_tasks_by_predicate(common::ObISQLClient &sql_client,
+                                                      const int64_t table_id,
                                                       const common::ObString &rowkey_predicate)
 {
   int ret = OB_SUCCESS;
@@ -106,8 +139,9 @@ int ObAiColumnTaskService::delete_tasks_by_predicate(common::ObISQLClient &sql_c
   int64_t affected_rows = 0;
   if (rowkey_predicate.empty()) {
     ret = OB_INVALID_ARGUMENT;
-  } else if (OB_FAIL(buffer.append_fmt("DELETE FROM %s WHERE rowkey_predicate = '%.*s'",
+  } else if (OB_FAIL(buffer.append_fmt("DELETE FROM %s WHERE table_id = %ld AND rowkey_predicate = '%.*s'",
                                        OB_ALL_AI_COLUMN_TASK_TNAME,
+                                       table_id,
                                        rowkey_predicate.length(),
                                        rowkey_predicate.ptr()))) {
   } else if (OB_FAIL(sql_client.write(buffer.ptr(), affected_rows))) {

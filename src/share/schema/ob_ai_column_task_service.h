@@ -43,6 +43,16 @@ public:
   ~ObAiColumnTaskService() = delete;
 
   /**
+   * Allocate the id of a task row.
+   *
+   * The id has to be unique inside the tenant: the queue is keyed by it and
+   * several tasks of the same row (one per AI column) coexist.
+   */
+  static int64_t alloc_task_id(const int64_t table_id,
+                               const int64_t column_id,
+                               const common::ObString &request_id);
+
+  /**
    * Insert one task row.
    *
    * @param sql_client   the client whose transaction the row joins
@@ -78,34 +88,13 @@ public:
    * do not survive the row.
    */
   static int delete_tasks_by_predicate(common::ObISQLClient &sql_client,
+                                        const int64_t table_id,
                                         const common::ObString &rowkey_predicate);
 
   /**
    * Delete one task row by its id.
    */
   static int delete_task(common::ObISQLClient &sql_client, const int64_t task_id);
-
-  /**
-   * Delete the task rows of one row of a table.
-   *
-   * The row is identified by the primary key predicate which is stored in the
-   * task row, it is used when a row is deleted.
-   */
-  static int delete_tasks_by_rowkey(common::ObISQLClient &sql_client,
-                                     const int64_t table_id,
-                                     const common::ObString &rowkey_predicate);
-
-  /**
-   * Update the state of one task row.
-   *
-   * The worker uses it to mark a task as RETRY, the new state is committed in
-   * its own transaction, so that it is visible to the other sessions.
-   */
-  static int update_task_state(common::ObISQLClient &sql_client,
-                                const int64_t task_id,
-                                const int64_t state,
-                                const int64_t retry_count,
-                                const int64_t eligible_ts);
 };
 
 } // end namespace schema

@@ -94,7 +94,7 @@ static int build_hidden_column_name(ObIAllocator &allocator,
       MEMCPY(buf + prefix_len, ai_column_name.ptr(), ai_column_name.length());
     }
     MEMCPY(buf + prefix_len + ai_column_name.length(), suffix, suffix_len);
-    result.assign(total, buf);
+    result.assign(buf, total);
   }
   return ret;
 }
@@ -164,7 +164,7 @@ int ObAiColumnUtil::build_normalized_expr(ObIAllocator &allocator,
     if (expr.length() > 0) {
       MEMCPY(buf + instruction_len, expr.ptr(), expr.length());
     }
-    normalized_expr.assign(total, buf);
+    normalized_expr.assign(buf, total);
   }
   return ret;
 }

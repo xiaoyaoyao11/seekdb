@@ -2526,9 +2526,10 @@ int ObDDLResolver::check_ai_column_expr(const ObColumnSchemaV2 &column,
         }
       }
       if (arg_dim > 0 && column_dim > 0 && arg_dim != column_dim) {
-        ret = OB_INVALID_ARGUMENT;
-        LOG_USER_ERROR(OB_INVALID_ARGUMENT,
-                       "ai column vector dimension does not match the AI_EMBED dimension");
+        ret = OB_ERR_INVALID_VECTOR_DIM;
+        LOG_USER_ERROR(OB_ERR_INVALID_VECTOR_DIM,
+                       static_cast<uint32_t>(column_dim),
+                       static_cast<uint32_t>(arg_dim));
       }
     }
   }

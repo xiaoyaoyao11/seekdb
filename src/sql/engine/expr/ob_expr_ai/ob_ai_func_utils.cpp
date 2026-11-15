@@ -1300,7 +1300,7 @@ int ObAIFuncUtils::convert_ai_result_to_target_type(ObIAllocator &allocator,
           ret = OB_ALLOCATE_MEMORY_FAILED;
         } else {
           MEMCPY(out, buf, len);
-          result.assign(len, out);
+          result.assign(out, len);
         }
       }
     }

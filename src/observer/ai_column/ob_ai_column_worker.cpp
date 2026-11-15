@@ -20,7 +20,7 @@
 
 #include "common/mysqlclient/ob_mysql_proxy.h"
 #include "common/mysqlclient/ob_mysql_transaction.h"
-#include "lib/allocator/ob_arena_allocator.h"
+#include "lib/allocator/page_arena.h"
 #include "lib/time/ob_time_utility.h"
 #include "lib/utility/utility.h"
 #include "share/inner_table/ob_inner_table_schema_constants.h"
@@ -48,7 +48,7 @@ using namespace oceanbase::share::schema;
  * The string is appended as a quoted literal whose special characters are
  * escaped, so that the value of the column is read back unchanged.
  */
-static int sql_append_hex_escape_str(const ObString &value, ObSqlString &sql)
+static int ai_column_append_string_literal(const ObString &value, ObSqlString &sql)
 {
   int ret = OB_SUCCESS;
   if (OB_FAIL(sql.append("'"))) {
@@ -165,7 +165,7 @@ int ObAiColumnWorker::collect_tasks_(ObIAllocator &allocator, ObIArray<ObAiColum
   ObSqlString sql;
   SMART_VAR(ObMySQLProxy::MySQLResult, res)
   {
-    ObMySQLResult *result = NULL;
+    common::sqlclient::ObMySQLResult *result = NULL;
     if (OB_FAIL(sql.assign_fmt("SELECT task_id, table_id, column_id, request_id, retry_count, "
                                 "rowkey_predicate, state, eligible_ts FROM %s "
                                 "WHERE state IN (%d, %d, %d) AND eligible_ts <= %ld "
@@ -176,7 +176,7 @@ int ObAiColumnWorker::collect_tasks_(ObIAllocator &allocator, ObIArray<ObAiColum
                                 static_cast<int32_t>(AI_COLUMN_TASK_RETRY),
                                 now_s,
                                 MAX_TASK_CNT_PER_ROUND))) {
-    } else if (OB_FAIL(GCTX.sql_proxy_.read(res, sql.ptr()))) {
+    } else if (OB_FAIL(GCTX.sql_proxy_->read(res, sql.ptr()))) {
       LOG_WARN("failed to read the tasks of the ai column queue", K(ret), K(sql));
     } else if (NULL == (result = res.get_result())) {
       ret = OB_ERR_UNEXPECTED;
@@ -300,14 +300,14 @@ int ObAiColumnWorker::check_stale_(const ObIArray<ObAiColumnTask> &group, bool &
     int64_t count = 0;
     SMART_VAR(ObMySQLProxy::MySQLResult, res)
     {
-      ObMySQLResult *result = NULL;
+      common::sqlclient::ObMySQLResult *result = NULL;
       if (OB_FAIL(sql.assign_fmt("SELECT count(*) FROM %s WHERE table_id = %ld AND column_id = %ld "
                                   "AND rowkey_predicate = ",
                                   OB_ALL_AI_COLUMN_TASK_TNAME, task.table_id_, task.column_id_))) {
-      } else if (OB_FAIL(sql_append_hex_escape_str(task.rowkey_predicate_, sql))) {
+      } else if (OB_FAIL(ai_column_append_string_literal(task.rowkey_predicate_, sql))) {
       } else if (OB_FAIL(sql.append(" AND request_id != "))) {
-      } else if (OB_FAIL(sql_append_hex_escape_str(task.request_id_, sql))) {
-      } else if (OB_FAIL(GCTX.sql_proxy_.read(res, sql.ptr()))) {
+      } else if (OB_FAIL(ai_column_append_string_literal(task.request_id_, sql))) {
+      } else if (OB_FAIL(GCTX.sql_proxy_->read(res, sql.ptr()))) {
         LOG_WARN("failed to check the stale tasks of the ai column queue", K(ret), K(sql));
       } else if (NULL == (result = res.get_result())) {
         ret = OB_ERR_UNEXPECTED;
@@ -317,7 +317,7 @@ int ObAiColumnWorker::check_stale_(const ObIArray<ObAiColumnTask> &group, bool &
         } else {
           ret = OB_SUCCESS;
         }
-      } else if (OB_FAIL(result->get_int(0, count))) {
+      } else if (OB_FAIL(result->get_int(static_cast<int64_t>(0), count))) {
         LOG_WARN("failed to read the stale tasks of the ai column queue", K(ret), K(sql));
       } else if (count > 0) {
         is_stale = true;
@@ -345,7 +345,7 @@ int ObAiColumnWorker::publish_group_(const ObString &db_name,
   int64_t affected_rows = 0;
   if (targets.count() <= 0) {
     ret = OB_INVALID_ARGUMENT;
-  } else if (OB_FAIL(trans.start(&GCTX.sql_proxy_))) {
+  } else if (OB_FAIL(trans.start(GCTX.sql_proxy_))) {
     LOG_WARN("failed to start the transaction of the ai column worker", K(ret));
   } else {
     for (int64_t i = 0; OB_SUCC(ret) && i < targets.count(); ++i) {
@@ -399,7 +399,7 @@ int ObAiColumnWorker::retry_group_(const ObIArray<ObAiColumnTask> &group)
   const int64_t eligible_ts = ObTimeUtility::current_time() / 1000000 + RETRY_DELAY_S;
   if (group.count() <= 0) {
     ret = OB_INVALID_ARGUMENT;
-  } else if (OB_FAIL(trans.start(&GCTX.sql_proxy_))) {
+  } else if (OB_FAIL(trans.start(GCTX.sql_proxy_))) {
     LOG_WARN("failed to start the transaction of the ai column worker", K(ret));
   } else {
     for (int64_t i = 0; OB_SUCC(ret) && i < group.count(); ++i) {
@@ -432,7 +432,7 @@ int ObAiColumnWorker::discard_group_(const ObIArray<ObAiColumnTask> &group)
   int64_t affected_rows = 0;
   if (group.count() <= 0) {
     ret = OB_INVALID_ARGUMENT;
-  } else if (OB_FAIL(trans.start(&GCTX.sql_proxy_))) {
+  } else if (OB_FAIL(trans.start(GCTX.sql_proxy_))) {
     LOG_WARN("failed to start the transaction of the ai column worker", K(ret));
   } else {
     for (int64_t i = 0; OB_SUCC(ret) && i < group.count(); ++i) {
