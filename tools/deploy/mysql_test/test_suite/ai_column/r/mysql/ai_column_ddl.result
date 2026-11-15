@@ -86,19 +86,6 @@ join oceanbase.__all_database d on d.database_id = t.database_id
 where d.database_name = 'ai_column_p0_ddl' and t.table_name = 'alter_docs';
 alter_add_metadata
 1
-show ai columns from ai_column_p0_ddl.docs;
-Column	Expression	Max_retries	State_column_id	Request_column_id	Result_spec_column_id
-emb	AI_EMBED('p0_ddl_embed', content)	3	23	24	25
-tags	CAST(AI_COMPLETE('p0_ddl_complete', concat('Classify: ', content), '{"system_prompt":"Return exactly one valid JSON value and nothing else."}') AS JSON)	2	20	21	22
-show ai columns from ai_column_p0_ddl.docs like 'emb';
-Column	Expression	Max_retries	State_column_id	Request_column_id	Result_spec_column_id
-emb	AI_EMBED('p0_ddl_embed', content)	3	23	24	25
-create table ai_column_p0_ddl.plain_docs(id bigint primary key, content varchar(20));
-show ai columns from ai_column_p0_ddl.plain_docs;
-Column	Expression	Max_retries	State_column_id	Request_column_id	Result_spec_column_id
-drop table ai_column_p0_ddl.plain_docs;
-show ai columns from ai_column_p0_ddl.no_such_table;
-ERROR 42S02: Table 'ai_column_p0_ddl.no_such_table' doesn't exist
 create table ai_column_p0_ddl.bad_dimension(
 content varchar(20),
 emb vector(4) AI COLUMN (AI_EMBED('p0_ddl_embed', content, 3))

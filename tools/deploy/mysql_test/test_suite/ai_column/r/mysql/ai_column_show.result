@@ -1,0 +1,40 @@
+drop database if exists ai_column_p0_show;
+create database ai_column_p0_show;
+call DBMS_AI_SERVICE.DROP_AI_MODEL_ENDPOINT('p0_show_complete_ep');
+ERROR 11112: This AI model endpoint 'p0_show_complete_ep' was not found
+call DBMS_AI_SERVICE.DROP_AI_MODEL('p0_show_complete');
+ERROR 11118: This AI model 'p0_show_complete' was not found
+call DBMS_AI_SERVICE.CREATE_AI_MODEL('p0_show_complete',
+  '{"type":"completion","model_name":"mock-complete"}');
+call DBMS_AI_SERVICE.CREATE_AI_MODEL_ENDPOINT('p0_show_complete_ep',
+  '{"ai_model_name":"p0_show_complete","url":"http://127.0.0.1:19125/v1/chat/completions","access_key":"p0-key","provider":"openai","request_model_name":"mock-complete"}');
+drop table if exists ai_column_p0_show.docs;
+Warnings:
+Note	1051	Unknown table 'ai_column_p0_show.docs'
+create table ai_column_p0_show.docs (
+  id bigint primary key,
+  content varchar(200),
+  tags json AI COLUMN (
+    AI_COMPLETE('p0_show_complete', concat('Classify: ', content))
+  ) WITH (sync_mode='async', max_retries=2),
+  label varchar(400) AI COLUMN (
+    AI_COMPLETE('p0_show_complete', content)
+  ) WITH (sync_mode='async', max_retries=1)
+);
+show ai columns from ai_column_p0_show.docs;
+Column	Expression	Max_retries	State_column_id	Request_column_id	Result_spec_column_id
+label	AI_COMPLETE('p0_show_complete', content)	1	23	24	25
+tags	CAST(AI_COMPLETE('p0_show_complete', concat('Classify: ', content), '{"system_prompt":"Return exactly one valid JSON value and nothing else."}') AS JSON)	2	20	21	22
+show ai columns from ai_column_p0_show.docs like 'tag';
+Column	Expression	Max_retries	State_column_id	Request_column_id	Result_spec_column_id
+tags	CAST(AI_COMPLETE('p0_show_complete', concat('Classify: ', content), '{"system_prompt":"Return exactly one valid JSON value and nothing else."}') AS JSON)	2	20	21	22
+create table ai_column_p0_show.plain_docs(id bigint primary key, content varchar(20));
+show ai columns from ai_column_p0_show.plain_docs;
+Column	Expression	Max_retries	State_column_id	Request_column_id	Result_spec_column_id
+drop table ai_column_p0_show.plain_docs;
+show ai columns from ai_column_p0_show.no_such_table;
+ERROR 42S02: Table 'ai_column_p0_show.no_such_table' doesn't exist
+drop table ai_column_p0_show.docs;
+call DBMS_AI_SERVICE.DROP_AI_MODEL_ENDPOINT('p0_show_complete_ep');
+call DBMS_AI_SERVICE.DROP_AI_MODEL('p0_show_complete');
+drop database ai_column_p0_show;
