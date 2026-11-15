@@ -1224,6 +1224,34 @@ int ai_datum_to_literal(ObEvalCtx &eval_ctx,
   return ret;
 }
 
+// Compare the old and the new value of a column at the datum level.
+//
+// The rendered SQL literal is not a faithful identity of a datum: two distinct
+// values can render to the same literal (for example a CHAR value and a VARCHAR
+// value that differ only in padding), and a literal comparison would then hide
+// a real change and leave a stale AI result behind.  Comparing the datums
+// directly avoids that.
+int ai_datum_changed(ObEvalCtx &eval_ctx,
+                      ObExpr *old_expr,
+                      ObExpr *new_expr,
+                      bool &changed)
+{
+  int ret = OB_SUCCESS;
+  ObDatum *old_datum = NULL;
+  ObDatum *new_datum = NULL;
+  changed = false;
+  if (OB_ISNULL(old_expr) || OB_ISNULL(new_expr)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(old_expr->eval(eval_ctx, old_datum))) {
+  } else if (OB_FAIL(new_expr->eval(eval_ctx, new_datum))) {
+  } else if (OB_ISNULL(old_datum) || OB_ISNULL(new_datum)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else {
+    changed = !ObDatum::binary_equal(*old_datum, *new_datum);
+  }
+  return ret;
+}
+
 int build_ai_rowkey_predicate(ObTableModifyOp &op,
                               const ObDMLBaseCtDef &dml_ctdef,
                               const ObTableSchema &table_schema,
@@ -1368,34 +1396,51 @@ int AIColumnHandle::do_handle(ObTableModifyOp &op,
     } else {
       // UPDATE: invalidate an AI column only when a column referenced by its
       // expression changed, or when the rowkey itself changed.
+      // Every rowkey column is compared: a composite primary key changes the row
+      // identity when any of its parts changes, not only when the first one does.
       for (int64_t i = 0; OB_SUCC(ret) && !rowkey_changed
                           && i < dml_ctdef.column_ids_.count()
                           && i < dml_ctdef.old_row_.count()
                           && i < dml_ctdef.new_row_.count(); ++i) {
         const ObColumnSchemaV2 *column =
             table_schema->get_column_schema(dml_ctdef.column_ids_.at(i));
-        if (NULL != column && column->is_rowkey_column() && !column->is_hidden()) {
-          ObString old_literal;
-          ObString new_literal;
-          if (OB_FAIL(ai_datum_to_literal(op.get_eval_ctx(), dml_ctdef.old_row_.at(i),
-                                          alloc, old_literal))) {
-          } else if (OB_FAIL(ai_datum_to_literal(op.get_eval_ctx(), dml_ctdef.new_row_.at(i),
-                                                 alloc, new_literal))) {
-          } else {
-            rowkey_changed = 0 != old_literal.compare(new_literal);
+        if (NULL != column && column->is_rowkey_column()) {
+          bool changed = false;
+          if (OB_FAIL(ai_datum_changed(op.get_eval_ctx(),
+                                        dml_ctdef.old_row_.at(i),
+                                        dml_ctdef.new_row_.at(i),
+                                        changed))) {
+          } else if (changed) {
+            rowkey_changed = true;
           }
         }
       }
       for (int64_t i = 0; OB_SUCC(ret) && i < all_ai_columns.count(); ++i) {
         const ObColumnSchemaV2 *ai_column = all_ai_columns.at(i);
         bool need_invalidate = rowkey_changed;
-        const ObString &expr = ai_column->get_ai_column_expr();
+        ObString expr = ai_column->get_ai_column_expr();
         if (expr.empty()) {
-          // The expression of a collection (VECTOR) AI column is not stored in the
-          // column schema, so its dependencies cannot be derived here. Invalidate
-          // on every update instead: regeneration is still driven by the task
-          // queue and the stored result is never stale.
-          need_invalidate = true;
+          // The expression of a collection (VECTOR) AI column cannot live in the
+          // column schema, because a collection column already uses its extended
+          // type info for the type itself.  It is persisted in the metadata
+          // table instead, so read it back from there to learn which columns the
+          // AI column depends on.  Without it the column would be regenerated
+          // after every update, even when nothing it depends on changed.
+          ObString loaded_expr;
+          int tmp_ret = share::schema::load_ai_column_expr(*op.sql_proxy_,
+                                                            table_id,
+                                                            ai_column->get_column_id(),
+                                                            alloc,
+                                                            loaded_expr);
+          if (OB_SUCCESS == tmp_ret) {
+            expr = loaded_expr;
+          } else {
+            // The metadata is gone, the column cannot be regenerated any more.
+            // Leave the column alone instead of queueing work that cannot run.
+            LOG_WARN("failed to load ai column expression", K(tmp_ret),
+                     K(ai_column->get_column_name_str()));
+            continue;
+          }
         }
         for (int64_t j = 0; OB_SUCC(ret) && !need_invalidate
                             && j < dml_ctdef.column_ids_.count()
@@ -1407,14 +1452,13 @@ int AIColumnHandle::do_handle(ObTableModifyOp &op,
               || !ai_expr_references_column(expr, column->get_column_name_str())) {
             continue;
           }
-          ObString old_literal;
-          ObString new_literal;
-          if (OB_FAIL(ai_datum_to_literal(op.get_eval_ctx(), dml_ctdef.old_row_.at(j),
-                                          alloc, old_literal))) {
-          } else if (OB_FAIL(ai_datum_to_literal(op.get_eval_ctx(), dml_ctdef.new_row_.at(j),
-                                                 alloc, new_literal))) {
-          } else {
-            need_invalidate = 0 != old_literal.compare(new_literal);
+          bool changed = false;
+          if (OB_FAIL(ai_datum_changed(op.get_eval_ctx(),
+                                        dml_ctdef.old_row_.at(j),
+                                        dml_ctdef.new_row_.at(j),
+                                        changed))) {
+          } else if (changed) {
+            need_invalidate = true;
           }
         }
         if (OB_SUCC(ret) && need_invalidate) {

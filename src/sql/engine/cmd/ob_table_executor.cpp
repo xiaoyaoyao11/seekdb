@@ -810,6 +810,12 @@ int ObAlterTableExecutor::alter_table_exchange_partition_rpc(obcall::ObExchangeP
   return ret;
 }
 
+// Rewrite the unquoted `status` pseudo column of a RETRY predicate into an
+// expression over the AI column's hidden state column.
+//
+// The pseudo column exposes the real per-row state, so PENDING, READY and
+// FAILED are distinguishable.  A backtick quoted `status` is left untouched:
+// it refers to an ordinary business column of the same name.
 static int rewrite_ai_retry_status(const ObString &predicate,
                                    const ObString &ai_column,
                                    ObSqlString &out)
@@ -833,8 +839,15 @@ static int rewrite_ai_retry_status(const ObString &predicate,
                && (i + 6 == len
                    || !(isalnum(static_cast<unsigned char>(p[i + 6])) || '_' == p[i + 6]))
                && 0 == strncasecmp(p + i, "status", 6)) {
-      ret = out.append_fmt("(case when `%.*s` is not null then 'READY' else 'FAILED' end)",
-                           ai_column.length(), ai_column.ptr());
+      ret = out.append_fmt("(case `__ai_state_%.*s`"
+                           " when %ld then 'PENDING'"
+                           " when %ld then 'READY'"
+                           " when %ld then 'FAILED'"
+                           " else 'PENDING' end)",
+                           ai_column.length(), ai_column.ptr(),
+                           static_cast<int64_t>(share::schema::OB_AI_TASK_PENDING),
+                           static_cast<int64_t>(share::schema::OB_AI_TASK_READY),
+                           static_cast<int64_t>(share::schema::OB_AI_TASK_FAILED));
       i += 5;
     } else {
       ret = out.append(p + i, 1);
@@ -949,9 +962,11 @@ static int execute_ai_column_retry(ObExecContext &ctx, const ObString &info)
               } else if (OB_ISNULL(state_column =
                                    table_schema->get_column_schema(state_column_id))) {
                 ret = OB_ERR_UNEXPECTED;
-              } else if (OB_FAIL(where_cond.append_fmt("`%.*s` = 3",
+              } else if (OB_FAIL(where_cond.append_fmt("`%.*s` = %ld",
                                                        state_column->get_column_name_str().length(),
-                                                       state_column->get_column_name_str().ptr()))) {
+                                                       state_column->get_column_name_str().ptr(),
+                                                       static_cast<int64_t>(
+                                                         share::schema::OB_AI_TASK_FAILED)))) {
               }
             }
             if (OB_SUCC(ret) && where_cond.empty()) {
@@ -998,10 +1013,16 @@ static int execute_ai_column_retry(ObExecContext &ctx, const ObString &info)
             }
             int64_t affected_rows = 0;
             if (OB_SUCC(ret)) {
-              if (OB_FAIL(sql_proxy->write(invalidate_sql.string(), affected_rows))) {
-                LOG_WARN("failed to invalidate ai column for retry", K(ret), K(invalidate_sql));
-              } else if (OB_FAIL(sql_proxy->write(upsert_sql.string(), affected_rows))) {
+              // The task is registered before the rows are invalidated.
+              //
+              // Both statements select the rows with the same predicate, and the
+              // invalidation resets the state of the AI column to PENDING.  If
+              // the invalidation ran first, a predicate on the status pseudo
+              // column would no longer match the rows it selected before.
+              if (OB_FAIL(sql_proxy->write(upsert_sql.string(), affected_rows))) {
                 LOG_WARN("failed to register ai column retry task", K(ret), K(upsert_sql));
+              } else if (OB_FAIL(sql_proxy->write(invalidate_sql.string(), affected_rows))) {
+                LOG_WARN("failed to invalidate ai column for retry", K(ret), K(invalidate_sql));
               }
             }
           }

@@ -418,6 +418,47 @@ int64_t next_ai_request_id()
   return id;
 }
 
+int load_ai_column_expr(common::ObMySQLProxy &proxy,
+                         const uint64_t table_id,
+                         const uint64_t column_id,
+                         ObIAllocator &allocator,
+                         ObString &expr)
+{
+  int ret = OB_SUCCESS;
+  expr.reset();
+  ObSqlString sql;
+  common::ObMySQLProxy::ReadResult read_result;
+  sqlclient::ObMySQLResult *result = NULL;
+  if (OB_FAIL(sql.append_fmt("select normalized_expr from oceanbase.__all_ai_column"
+                              " where table_id = %lu and column_id = %lu",
+                              table_id, column_id))) {
+  } else if (OB_FAIL(proxy.read(read_result, sql.ptr(), NULL))) {
+    LOG_WARN("failed to read ai column metadata", K(ret), K(table_id), K(column_id));
+  } else if (OB_ISNULL(result = read_result.get_result())) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(result->next())) {
+    if (OB_ITER_END == ret) {
+      ret = OB_ENTRY_NOT_EXIST;
+    }
+  } else {
+    ObString value;
+    if (OB_FAIL(result->get_varchar("normalized_expr", value))) {
+    } else if (value.empty()) {
+      ret = OB_ENTRY_NOT_EXIST;
+    } else {
+      char *buf = static_cast<char *>(allocator.alloc(value.length() + 1));
+      if (OB_ISNULL(buf)) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else {
+        MEMCPY(buf, value.ptr(), value.length());
+        buf[value.length()] = '\0';
+        expr.assign_ptr(buf, static_cast<int32_t>(value.length()));
+      }
+    }
+  }
+  return ret;
+}
+
 const char *const OB_AI_COLUMN_INTERNAL_MARKER = "/*ai_column_internal*/";
 
 bool is_ai_column_internal_sql(const ObString &sql)
@@ -526,14 +567,20 @@ int build_ai_invalidate_sql(common::ObSqlString &sql,
     for (int64_t i = 0; OB_SUCC(ret) && i < ai_columns.count(); ++i) {
       const ObColumnSchemaV2 *column = ai_columns.at(i);
       char request_name[AI_HIDDEN_COLUMN_NAME_LEN];
+      char state_name[AI_HIDDEN_COLUMN_NAME_LEN];
       if (OB_FAIL(make_hidden_column_name(AI_REQUEST_PREFIX,
                                           column->get_column_name_str(),
                                           request_name, sizeof(request_name)))) {
-      } else if (OB_FAIL(sql.append_fmt("%s`%.*s` = NULL, `%s` = %ld",
+      } else if (OB_FAIL(make_hidden_column_name(AI_STATE_PREFIX,
+                                                 column->get_column_name_str(),
+                                                 state_name, sizeof(state_name)))) {
+      } else if (OB_FAIL(sql.append_fmt("%s`%.*s` = NULL, `%s` = %ld, `%s` = %ld",
                                        0 == i ? "" : ", ",
                                        column->get_column_name_str().length(),
                                        column->get_column_name_str().ptr(),
-                                       request_name, request_id))) {
+                                       request_name, request_id,
+                                       state_name,
+                                       static_cast<int64_t>(OB_AI_TASK_PENDING)))) {
       }
     }
     if (OB_SUCC(ret)) {

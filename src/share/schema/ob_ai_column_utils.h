@@ -123,6 +123,20 @@ int build_ai_normalized_expr(ObIAllocator &allocator,
                              const ObString &expr,
                              ObString &normalized);
 
+// Read the persisted expression of one AI column from the metadata table.
+//
+// The expression of a collection (VECTOR) AI column cannot live in the column
+// schema, because a collection column already uses its extended type info for
+// the type itself.  It is persisted in oceanbase.__all_ai_column instead, so the
+// dependency set of such a column is only available from the metadata table.
+//
+// Returns OB_ENTRY_NOT_EXIST when the column has no metadata row.
+int load_ai_column_expr(common::ObMySQLProxy &proxy,
+                         const uint64_t table_id,
+                         const uint64_t column_id,
+                         ObIAllocator &allocator,
+                         ObString &expr);
+
 } // namespace schema
 } // namespace share
 } // namespace oceanbase

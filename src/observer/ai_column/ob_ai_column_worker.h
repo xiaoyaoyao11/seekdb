@@ -20,6 +20,7 @@
 #include "share/ob_thread_pool.h"
 #include "lib/container/ob_se_array.h"
 #include "lib/string/ob_string.h"
+#include "common/mysqlclient/ob_isql_client.h"
 
 namespace oceanbase
 {
@@ -61,17 +62,26 @@ private:
   };
   int do_work_();
   int reset_running_tasks_();
+  // A ReadResult embeds a 24K handler buffer.  The worker thread has a small
+  // stack, so the buffer is allocated on the heap instead.
+  static int alloc_read_result(common::ObIAllocator &alloc,
+                               common::ObISQLClient::ReadResult *&read_result);
   int load_tasks_(common::ObIAllocator &alloc,
                   common::ObIArray<AITask> &tasks,
                   bool &has_more);
-  int process_group_(const common::ObIArray<AITask> &tasks,
+  int process_group_(common::ObIAllocator &alloc,
+                     const common::ObIArray<AITask> &tasks,
                      const int64_t begin,
                      const int64_t end);
   int update_task_state_(const AITask &task, const int64_t state);
   int delete_group_tasks_(const AITask &task);
+  // Remove the task row of one finished column.
+  int delete_task_(const AITask &task);
   int retry_group_tasks_(const common::ObIArray<AITask> &tasks,
-                         const int64_t begin,
-                         const int64_t end);
+                         const common::ObIArray<int64_t> &indexes);
+  // Record the terminal failure of one task on the row itself, so that the row
+  // keeps the FAILED state after the task row is removed.
+  int mark_row_failed_(const AITask &task);
 private:
   common::ObMySQLProxy *sql_proxy_ = nullptr;
   bool inited_ = false;
