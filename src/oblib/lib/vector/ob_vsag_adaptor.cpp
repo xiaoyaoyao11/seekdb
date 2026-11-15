@@ -481,8 +481,9 @@ static bool ob_cuvs_serialize(void *key, std::ostream &out, int &ret) {
   if (it == g_ob_cuvs_reg.end()) { return false; }
   ObCuvsEntry *ent = it->second;
   const size_t n = ent->buf_ids_.size();
+  const bool rebuild_needed = (ent->bridge_ == nullptr || ent->built_n_ != n);
   if (n < OB_CUVS_MIN_PTS || ent->dim_ <= 0 ||
-      ent->buf_vecs_.size() != n * static_cast<size_t>(ent->dim_)) {
+      (rebuild_needed && ent->buf_vecs_.size() != n * static_cast<size_t>(ent->dim_))) {
     return false;
   }
   const int64_t start_us = ObTimeUtility::current_time();
@@ -517,8 +518,11 @@ static bool ob_cuvs_serialize(void *key, std::ostream &out, int &ret) {
       !ob_cuvs_write(out, &dim32, sizeof(dim32)) ||
       !ob_cuvs_write(out, &reserved, sizeof(reserved)) ||
       !ob_cuvs_write(out, &n64, sizeof(n64)) ||
-      !ob_cuvs_write(out, ent->buf_ids_.data(), n * sizeof(int64_t)) ||
-      !ob_cuvs_write(out, ent->buf_vecs_.data(), ent->buf_vecs_.size() * sizeof(float))) {
+      !ob_cuvs_write(out, ent->buf_ids_.data(), n * sizeof(int64_t))) {
+    /* Raw float vectors are intentionally not duplicated here: the CAGRA
+     * snapshot below is serialized with its dataset (include_dataset=true),
+     * so writing another n*dim*4 bytes into the LOB stream would double both
+     * the write and the read inside the timed CREATE INDEX window. */
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("[OBVSAG][cuVS] failed to write snapshot stream", K(ret), KP(key), K(n));
     return true;
@@ -561,9 +565,10 @@ static int ob_cuvs_deserialize(void *key, int expected_dim, std::istream &in) {
     ObCuvsEntry *ent = new ObCuvsEntry();
     ent->dim_ = dim32;
     ent->buf_ids_.resize(n);
-    ent->buf_vecs_.resize(n * static_cast<size_t>(dim32));
-    if (!ob_cuvs_read(in, ent->buf_ids_.data(), n * sizeof(int64_t)) ||
-        !ob_cuvs_read(in, ent->buf_vecs_.data(), ent->buf_vecs_.size() * sizeof(float))) {
+    /* buf_vecs_ stays empty: vectors live inside the CAGRA dataset that is
+     * restored by cuvsCagraDeserialize below.  The GPU search path never
+     * dereferences buf_vecs_ while bridge_ is live (built_n_ == n). */
+    if (!ob_cuvs_read(in, ent->buf_ids_.data(), n * sizeof(int64_t))) {
       delete ent;
       ret = OB_ERR_UNEXPECTED;
       LOG_WARN("[OBVSAG][cuVS] truncated snapshot payload", K(ret), KP(key), K(n64));
