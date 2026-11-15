@@ -162,10 +162,11 @@ static int build_rowkey_predicate(ObIAllocator &allocator,
     if (OB_FAIL(expr->eval(eval_ctx, datum))) {
     } else if (OB_ISNULL(datum)) {
       ret = OB_ERR_UNEXPECTED;
-    } else if (!has_pk && OB_FAIL(condition.append_fmt("`%.*s` = ",
-                                                       column->get_column_name_str().length(),
-                                                       column->get_column_name_str().ptr()))) {
-    } else if (FALSE_IT(has_pk = true)) {
+    } else if (has_pk && OB_FAIL(condition.append(" AND "))) {
+      // the primary key has more than one column
+    } else if (OB_FAIL(condition.append_fmt("`%.*s` = ",
+                                             column->get_column_name_str().length(),
+                                             column->get_column_name_str().ptr()))) {
     } else if (OB_FAIL(append_pk_literal(condition, *column, *datum))) {
       if (OB_NOT_SUPPORTED == ret) {
         // an unsupported primary key type: skip this row
@@ -174,6 +175,8 @@ static int build_rowkey_predicate(ObIAllocator &allocator,
         has_pk = false;
         break;
       }
+    } else {
+      has_pk = true;
     }
   }
   if (OB_SUCC(ret) && has_pk) {
