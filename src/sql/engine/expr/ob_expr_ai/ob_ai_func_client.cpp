@@ -156,7 +156,9 @@ int ObAIFuncClient::send_post(ObJsonObject *data, ObJsonObject *&response)
       if (is_timeout()) {
         ret = OB_TIMEOUT;
       } else if (res != CURLE_OK) {
-        // retry
+        // network failures are reported immediately, the caller decides whether
+        // to retry the whole request
+        break;
       } else if (!is_retryable_status_code(http_code)) {
         break;
       } else {

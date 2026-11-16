@@ -98,6 +98,16 @@ private:
                              const ObForeignKeyArg &fk_arg, bool &is_self_ref);
 };
 
+class AIColumnHandle
+{
+public:
+  // Maintain the AI columns of a row inside the business transaction: invalidate
+  // dependency changes and register the asynchronous generation tasks.
+  static int do_handle(ObTableModifyOp &op,
+                       const ObDMLBaseCtDef &dml_ctdef,
+                       const ObDmlEventType dml_event);
+};
+
 class ObTableModifyOp;
 class ObTableModifySpec : public ObOpSpec
 {
@@ -238,7 +248,8 @@ public:
   bool has_before_row_trigger(const ObDMLBaseCtDef &dml_ctdef) { return dml_ctdef.is_primary_index_ && dml_ctdef.trig_ctdef_.all_tm_points_.has_before_row(); }
   bool has_after_row_trigger(const ObDMLBaseCtDef &dml_ctdef) { return dml_ctdef.is_primary_index_ && dml_ctdef.trig_ctdef_.all_tm_points_.has_after_row(); }
   bool need_foreign_key_check(const ObDMLBaseCtDef &dml_ctdef) { return dml_ctdef.is_primary_index_ && dml_ctdef.fk_args_.count() > 0; }
-  bool need_after_row_process(const ObDMLBaseCtDef &dml_ctdef) { return need_foreign_key_check(dml_ctdef) || has_after_row_trigger(dml_ctdef); }
+  bool need_after_row_process(const ObDMLBaseCtDef &dml_ctdef) { return need_foreign_key_check(dml_ctdef) || has_after_row_trigger(dml_ctdef) || need_ai_column_check(dml_ctdef); }
+  bool need_ai_column_check(const ObDMLBaseCtDef &dml_ctdef);
   void set_execute_single_row() { execute_single_row_ = true; }
   void unset_execute_single_row() { execute_single_row_ = false; }
   bool get_execute_single_row() const { return execute_single_row_; }
@@ -313,6 +324,10 @@ public:
   ObDMLModifyRowsList dml_modify_rows_;
   ObSEArray<ObForeignKeyChecker *, 4> fk_checkers_;
   ObChunkDatumStore::ShadowStoredRow last_store_row_;
+  // cache of "does the modified table have AI columns" to avoid repeated schema lookups
+  uint64_t ai_column_table_id_ = common::OB_INVALID_ID;
+  bool ai_column_checked_ = false;
+  bool has_ai_column_ = false;
 private:
   ObSQLSessionInfo::StmtSavedValue *saved_session_;
   char saved_session_buf_[sizeof(ObSQLSessionInfo::StmtSavedValue)] __attribute__((aligned (16)));;
