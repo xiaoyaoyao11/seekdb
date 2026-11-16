@@ -16,6 +16,7 @@
 
 #define USING_LOG_PREFIX SQL_RESV
 #include "sql/resolver/dml/ob_insert_resolver.h"
+#include "share/schema/ob_ai_column_utils.h"
 #include "sql/resolver/dml/ob_select_resolver.h"
 #include "sql/rewrite/ob_transform_utils.h"
 #include "ob_default_value_utils.h"
@@ -98,6 +99,12 @@ int ObInsertResolver::resolve(const ParseNode &parse_tree)
 
   if (OB_SUCC(ret)) {
     if (OB_FAIL(check_view_insertable())) {
+    }
+  }
+
+  if (OB_SUCC(ret)) {
+    if (OB_FAIL(mark_ai_column_nested_sql(*insert_stmt))) {
+    } else if (OB_FAIL(check_ai_column_strict_read(*insert_stmt))) {
     }
   }
 
@@ -839,7 +846,11 @@ int ObInsertResolver::check_insert_select_field(ObInsertStmt &insert_stmt,
                                                                    is_generated_column))) {
     } else if (is_generated_column
                || (value_desc->is_ai_column()
-                   && (NULL == params_.session_info_ || !params_.session_info_->is_inner()))) {
+                   && (NULL == params_.session_info_
+                       || (!params_.session_info_->is_inner()
+                           && !params_.session_info_->is_ai_column_internal()
+                           && !share::schema::is_ai_column_internal_sql(
+                                  params_.session_info_->get_current_query_string()))))) {
       if (select_stmt.get_table_size() == 1 &&
           select_stmt.get_table_item(0) != NULL &&
           select_stmt.get_table_item(0)->is_values_table()) {

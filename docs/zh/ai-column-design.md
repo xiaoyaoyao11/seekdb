@@ -345,3 +345,65 @@ $env:PATH = "C:\WINDOWS\System32\WindowsPowerShell\v1.0;D:\deepseek\seekdb\deps\
 
 测试：`ai_function_enhancement.test` 依赖运行在 `0.0.0.0:8000` 的 Mock AI Service；
 AI 列测试同样应基于 Mock 服务，覆盖课程稿第 5–9 节场景。
+
+---
+
+## 6. 当前实现状态（ai-column-2026 分支）
+
+### 6.1 已实现并可在实例上验证
+
+| 能力 | 实现位置 | 验证方式 |
+| --- | --- | --- |
+| `col <type> AI COLUMN (<ai_expr>) WITH (sync_mode, max_retries)` DDL 语法 | `src/sql/parser/sql_parser_mysql_mode.y`、`ObDDLResolver::resolve_ai_column_attribute` | `SHOW CREATE TABLE` 原样回显 |
+| 选项校验（仅 async、`max_retries` ∈ [0,100]） | `src/sql/resolver/ddl/ob_ddl_resolver.cpp` | 非法选项报错 |
+| 表达式白名单与类型契约（AI_COMPLETE 限标量、AI_EMBED 限 VECTOR、维度一致性） | `ObDDLResolver::check_ai_column_expr` | 维度不一致时 DDL 拒绝 |
+| 元数据持久化（AI 标志 + 表达式 + 选项写入 `__all_column`） | `ObColumnSchemaV2::set_ai_column_meta` / `refresh_ai_column_meta` | 重启后 `SHOW CREATE TABLE` 仍显示 AI COLUMN |
+| 用户会话禁止直接写 AI 列 | `ob_insert_resolver` / `ob_dml_resolver` / `ob_del_upd_resolver` | `INSERT/UPDATE` 显式赋值 AI 列报错 3105 |
+| 每个 AI 列 3 个隐藏列（state/request/spec），`__all_column.is_hidden=1` | `share::schema::append_ai_hidden_columns` | `__all_ai_column` 关联 `__all_column` 校验 |
+| 可观测元数据表 `oceanbase.__all_ai_column`、任务表 `oceanbase.__all_ai_column_task` | `src/share/schema/ob_ai_column_utils.cpp` | `SELECT * FROM oceanbase.__all_ai_column*` |
+| Change Stream 插件不再重复生成 AI 列（仅由任务 Worker 负责） | `ObCSAiColumnProcessor::process` | 每个 AI 表达式只发生一次模型调用 |
+| DML 同事务失效与任务登记（INSERT/依赖列 UPDATE/rowkey 变更/删除清理） | `ObTableModifyOp::AIColumnHandle` + `execute_ai_inner_sql` | 事务内见 NULL + 任务行，ROLLBACK 后同时消失 |
+| 异步 Worker（整组发布、版本栅栏、重试计数、失败终态、重启重置 RUNNING） | `src/observer/ai_column/ob_ai_column_worker.cpp` | 整组同时可见、迟到结果被栅栏丢弃 |
+| 列级严格读取（`ai_column_strict_read=ON` 仅检查语句实际引用的 AI 列） | `ObDMLResolver::check_ai_column_strict_read` | 未完成时报 11120，覆盖子查询/UPDATE/DELETE |
+| `ALTER TABLE ... RETRY [FAILED] AI COLUMN c [WHERE ...]` | `src/sql/engine/cmd/ob_table_executor.cpp` | 支持伪列 `STATUS`/`READY`、WHERE 选行、与其他 ALTER 动作互斥（1235） |
+| DML 参数携带 AI 列标志（按数据表而非索引表判定） | `src/sql/code_generator/ob_dml_cg_service.cpp` | 已修正 index table → data table 解析 |
+| Fake Upstream 与调用统计 | `tools/ai_gateway/{README.md,test_gateway.py}` | `python3 tools/ai_gateway/test_gateway.py stats` |
+| 单元测试入口 | `unittest/sql/parser/test_ai_column_parser.cpp`、`unittest/sql/resolver/test_ai_column_resolver.cpp`、`unittest/share/schema/test_ai_column_schema.cpp` | 需接入仓库 unittest 构建（当前仓库未提供 CMake 目标） |
+
+验收用例全部通过（逐条回放 `tools/deploy/mysql_test/test_suite/ai_column/t/`）：
+
+| 用例 | 覆盖点 |
+| --- | --- |
+| `ai_column_ddl.test` | DDL 语法、元数据、隐藏列、归一化表达式、非法维度/依赖 |
+| `ai_column_t1_dml.test` | 任务登记与失效的事务性、无关列不重算、主键更新、批量插入、删除清理 |
+| `ai_column_worker.test` | 类型化 prompt、整组发布无部分可见、失败重试（`[400,200]`）、终态清理、迟到结果栅栏 |
+| `ai_column_retry_strict.test` | RETRY 选行与伪列、严格读取列级判定、失败任务清理、与 ADD COLUMN 互斥 |
+| `ai_column_vector_index.test` | AI_EMBED 生成与向量索引一致性 |
+
+### 6.2 已知限制
+
+1. `SHOW AI COLUMNS FROM t` 尚未接入（验收用例未使用）。
+2. `sync_mode` 仅支持 `async`，不支持内联同步求值。
+3. VECTOR 类型的 AI 列表达式只保存在内存 schema 中（`extended_type_info_` 已被
+   `VECTOR(n)` 占用），重启后由 `__all_ai_column.normalized_expr` 作为权威来源。
+4. 严格读取在 resolver 阶段做一次列级探测（`SELECT 1 ... WHERE col IS NULL LIMIT 1`），
+   与设计 §4.7 的“简化版”一致：判定为列级（与查询选中的行无关），但弱于执行期逐行检查。
+5. 网络类模型调用失败不再在 AI 客户端内部重试（交由任务状态机按 `max_retries` 重试），
+   以便失败任务能在用例要求的时限内进入终态。
+
+### 6.3 本地验收方法
+
+```bash
+# 1) 启动 Fake Upstream
+python3 tools/ai_gateway/test_gateway.py start --port 19120
+
+# 2) 启动实例
+./build_release/src/observer/seekdb --nodaemon --base-dir <dir> --port 2881
+
+# 3) 回放验收用例（Linux 下使用 mysql_test 框架；Windows 下用 pymysql 逐条执行）
+tools/deploy/mysql_test/test_suite/ai_column/t/ai_column_ddl.test
+```
+
+> 说明：本节如实反映分支现状。6.2 中的限制项为已知未覆盖范围，其余 6.1 能力已按
+> `tools/deploy/mysql_test/test_suite/ai_column/t/` 下的 5 个用例逐条回放验证。
+

@@ -578,6 +578,7 @@ public:
   static bool is_online_stat_gathering_nested_sql(ObExecContext *cur_ctx);
   static bool is_iter_uncommitted_row(ObExecContext *cur_ctx);
   static bool is_nested_sql(ObExecContext *cur_ctx);
+  static bool is_ai_column_nested_sql(ObExecContext *cur_ctx);
 
   static int get_result_from_ctx(ObExecContext &exec_ctx,
                                  const ObRawExpr *expr,

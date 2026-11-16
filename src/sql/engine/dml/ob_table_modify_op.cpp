@@ -17,7 +17,12 @@
 #define USING_LOG_PREFIX SQL_ENG
 
 #include "ob_table_modify_op.h"
+#include <cctype>
 #include "share/ob_autoincrement_service.h"
+#include "share/ob_server_struct.h"
+#include "share/schema/ob_ai_column_utils.h"
+#include "share/schema/ob_multi_version_schema_service.h"
+#include "share/schema/ob_schema_getter_guard.h"
 #include "query/session/ob_inner_sql_connection_access.h"
 #include "sql/engine/ob_physical_plan.h"
 #include "sql/engine/dml/ob_dml_service.h"
@@ -637,8 +642,15 @@ int ObTableModifyOp::inner_open()
 {
   int ret = OB_SUCCESS;
   ObSQLSessionInfo *my_session = GET_MY_SESSION(ctx_);
+  const ObDMLBaseCtDef *single_ctdef = NULL;
+  bool need_ai_column_conn = false;
+  if (OB_SUCCESS == MY_SPEC.get_single_dml_ctdef(single_ctdef)
+      && NULL != single_ctdef) {
+    need_ai_column_conn = need_ai_column_check(*single_ctdef);
+  }
   if (OB_FAIL(init_foreign_key_operation())) {
-  } else if (MY_SPEC.plan_->has_nested_sql() && OB_FAIL(open_inner_conn())) {
+  } else if ((MY_SPEC.plan_->has_nested_sql() || need_ai_column_conn)
+             && OB_FAIL(open_inner_conn())) {
   } else if (OB_FAIL(calc_single_table_loc())) {
   } else if (OB_FAIL(check_need_exec_single_row())) {
   } else {
@@ -1156,5 +1168,341 @@ int ObTableModifyOp::perform_batch_fk_check()
   }
   return ret;
 }
+bool ObTableModifyOp::need_ai_column_check(const ObDMLBaseCtDef &dml_ctdef)
+{
+  // das_base_ctdef_.table_id_ is the table location id and may be invalid for
+  // single-partition DML, index_tid_ is the real (index) table id.
+  const uint64_t table_id = dml_ctdef.das_base_ctdef_.index_tid_;
+  if (!dml_ctdef.is_primary_index_) {
+    // index tables never carry AI columns
+  } else if (!ai_column_checked_ || ai_column_table_id_ != table_id) {
+    ai_column_table_id_ = table_id;
+    ai_column_checked_ = true;
+    has_ai_column_ = false;
+    share::schema::ObSchemaGetterGuard schema_guard;
+    const ObTableSchema *table_schema = NULL;
+    ObMultiVersionSchemaService *schema_service = GCTX.schema_service_;
+    if (NULL != schema_service
+        && OB_SUCCESS == schema_service->get_runtime_schema_guard(schema_guard)
+        && OB_SUCCESS == schema_guard.get_table_schema(table_id, table_schema)
+        && NULL != table_schema) {
+      has_ai_column_ = table_schema->has_ai_column();
+    }
+  }
+  return dml_ctdef.is_primary_index_ && has_ai_column_;
+}
+
+namespace
+{
+
+int ai_datum_to_literal(ObEvalCtx &eval_ctx,
+                        ObExpr *expr,
+                        ObIAllocator &alloc,
+                        ObString &literal)
+{
+  int ret = OB_SUCCESS;
+  ObDatum *datum = NULL;
+  literal.reset();
+  if (OB_ISNULL(expr)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(expr->eval(eval_ctx, datum))) {
+  } else if (OB_ISNULL(datum)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (datum->is_null()) {
+    literal = ObString::make_string("NULL");
+  } else {
+    ObObj obj;
+    char *buf = NULL;
+    int64_t len = 0;
+    int64_t pos = 0;
+    if (OB_FAIL(datum->to_obj(obj, expr->obj_meta_))) {
+    } else if (OB_FAIL(obj.print_sql_literal(buf, len, pos, alloc, ObObjPrintParams()))) {
+    } else {
+      literal.assign_ptr(buf, static_cast<int32_t>(pos));
+    }
+  }
+  return ret;
+}
+
+// Compare the old and the new value of a column at the datum level.
+//
+// The rendered SQL literal is not a faithful identity of a datum: two distinct
+// values can render to the same literal (for example a CHAR value and a VARCHAR
+// value that differ only in padding), and a literal comparison would then hide
+// a real change and leave a stale AI result behind.  Comparing the datums
+// directly avoids that.
+int ai_datum_changed(ObEvalCtx &eval_ctx,
+                      ObExpr *old_expr,
+                      ObExpr *new_expr,
+                      bool &changed)
+{
+  int ret = OB_SUCCESS;
+  ObDatum *old_datum = NULL;
+  ObDatum *new_datum = NULL;
+  changed = false;
+  if (OB_ISNULL(old_expr) || OB_ISNULL(new_expr)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(old_expr->eval(eval_ctx, old_datum))) {
+  } else if (OB_FAIL(new_expr->eval(eval_ctx, new_datum))) {
+  } else if (OB_ISNULL(old_datum) || OB_ISNULL(new_datum)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else {
+    changed = !ObDatum::binary_equal(*old_datum, *new_datum);
+  }
+  return ret;
+}
+
+int build_ai_rowkey_predicate(ObTableModifyOp &op,
+                              const ObDMLBaseCtDef &dml_ctdef,
+                              const ObTableSchema &table_schema,
+                              const ObExprPtrIArray &row,
+                              ObIAllocator &alloc,
+                              ObSqlString &predicate)
+{
+  int ret = OB_SUCCESS;
+  ObEvalCtx &eval_ctx = op.get_eval_ctx();
+  bool first = true;
+  for (int64_t i = 0; OB_SUCC(ret) && i < dml_ctdef.column_ids_.count()
+                            && i < row.count(); ++i) {
+    const ObColumnSchemaV2 *column = table_schema.get_column_schema(dml_ctdef.column_ids_.at(i));
+    if (NULL == column || !column->is_rowkey_column() || column->is_hidden()) {
+      continue;
+    }
+    ObString literal;
+    if (OB_FAIL(ai_datum_to_literal(eval_ctx, row.at(i), alloc, literal))) {
+    } else if (OB_FAIL(predicate.append_fmt("%s`%.*s` = %.*s",
+                                            first ? "" : " AND ",
+                                            column->get_column_name_str().length(),
+                                            column->get_column_name_str().ptr(),
+                                            literal.length(), literal.ptr()))) {
+    } else {
+      first = false;
+    }
+  }
+  if (OB_SUCC(ret) && first) {
+    ret = OB_ERR_UNEXPECTED;
+    LOG_WARN("no rowkey column found for ai column maintenance", K(ret));
+  }
+  return ret;
+}
+
+bool ai_expr_references_column(const ObString &expr, const ObString &column_name)
+{
+  bool found = false;
+  const char *p = expr.ptr();
+  const int64_t len = expr.length();
+  const char *name = column_name.ptr();
+  const int64_t name_len = column_name.length();
+  for (int64_t i = 0; !found && name_len > 0 && i + name_len <= len; ++i) {
+    const bool left_ok = 0 == i || (!isalnum(static_cast<unsigned char>(p[i - 1]))
+                                    && '_' != p[i - 1]);
+    const bool right_ok = i + name_len == len
+        || (!isalnum(static_cast<unsigned char>(p[i + name_len]))
+            && '_' != p[i + name_len]);
+    if (left_ok && right_ok && 0 == strncasecmp(p + i, name, name_len)) {
+      found = true;
+    }
+  }
+  return found;
+}
+
+int execute_ai_inner_sql(ObTableModifyOp &op, ObSQLSessionInfo *session, const char *sql)
+{
+  int ret = OB_SUCCESS;
+  ObDASCtx &das_ctx = op.get_exec_ctx().get_das_ctx();
+  const bool saved_ai_nested = das_ctx.is_ai_column_nested_;
+  const bool saved_iter_uncommitted = das_ctx.iter_uncommitted_row_;
+  if (OB_ISNULL(sql) || OB_ISNULL(session)) {
+    ret = OB_INVALID_ARGUMENT;
+  } else {
+    // Tell the framework that the nested statement is triggered by the AI
+    // column maintenance, it must share the transaction of the outer DML.
+    das_ctx.is_ai_column_nested_ = true;
+    das_ctx.iter_uncommitted_row_ = true;
+    if (OB_FAIL(op.begin_nested_session(false))) {
+      LOG_WARN("failed to begin nested session for ai column", K(ret));
+    } else {
+      session->set_ai_column_internal(true);
+      int write_ret = op.execute_write(sql);
+      session->set_ai_column_internal(false);
+      int end_ret = op.end_nested_session();
+      if (OB_SUCCESS != write_ret) {
+        ret = write_ret;
+        LOG_WARN("failed to execute ai column sql", K(ret), K(sql));
+      } else if (OB_SUCCESS != end_ret) {
+        ret = end_ret;
+        LOG_WARN("failed to end nested session for ai column", K(ret));
+      }
+    }
+    das_ctx.is_ai_column_nested_ = saved_ai_nested;
+    das_ctx.iter_uncommitted_row_ = saved_iter_uncommitted;
+  }
+  return ret;
+}
+
+} // namespace
+
+int AIColumnHandle::do_handle(ObTableModifyOp &op,
+                              const ObDMLBaseCtDef &dml_ctdef,
+                              const ObDmlEventType dml_event)
+{
+  int ret = OB_SUCCESS;
+  const uint64_t table_id = dml_ctdef.das_base_ctdef_.index_tid_;
+  ObSQLSessionInfo *session = op.get_exec_ctx().get_my_session();
+  ObMultiVersionSchemaService *schema_service = GCTX.schema_service_;
+  ObSchemaGetterGuard schema_guard;
+  const ObTableSchema *table_schema = NULL;
+  const ObDatabaseSchema *db_schema = NULL;
+  if (OB_ISNULL(session) || OB_ISNULL(schema_service)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (!dml_ctdef.is_primary_index_
+             || session->is_ai_column_internal()
+             || share::schema::is_ai_column_internal_sql(
+                    session->get_current_query_string())) {
+    // internal maintenance statements must not re-enter this handler
+  } else if (OB_FAIL(schema_service->get_runtime_schema_guard(schema_guard))) {
+  } else if (OB_FAIL(schema_guard.get_table_schema(table_id, table_schema))) {
+  } else if (OB_ISNULL(table_schema) || !table_schema->has_ai_column()) {
+  } else if (OB_FAIL(schema_guard.get_database_schema(table_schema->get_database_id(),
+                                                       db_schema))) {
+  } else if (OB_ISNULL(db_schema)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else {
+    ObArenaAllocator alloc(ObModIds::OB_MODULE_PAGE_ALLOCATOR,
+                           OB_MALLOC_NORMAL_BLOCK_SIZE);
+    ObSEArray<const ObColumnSchemaV2 *, 8> all_ai_columns;
+    ObSEArray<const ObColumnSchemaV2 *, 8> target_columns;
+    bool rowkey_changed = false;
+    for (ObTableSchema::const_column_iterator it = table_schema->column_begin();
+         OB_SUCC(ret) && NULL != it && it != table_schema->column_end(); ++it) {
+      if (NULL != *it && (*it)->is_ai_column()) {
+        ret = all_ai_columns.push_back(*it);
+      }
+    }
+    if (OB_FAIL(ret)) {
+    } else if (all_ai_columns.empty()) {
+    } else if (ObDmlEventType::DE_DELETING == dml_event) {
+      ObSqlString predicate;
+      ObSqlString sql;
+      if (OB_FAIL(build_ai_rowkey_predicate(op, dml_ctdef, *table_schema,
+                                            dml_ctdef.old_row_, alloc, predicate))) {
+      } else if (OB_FAIL(build_ai_task_delete_sql(sql, table_id, predicate.string()))) {
+      } else if (OB_FAIL(execute_ai_inner_sql(op, session, sql.ptr()))) {
+      }
+    } else if (ObDmlEventType::DE_INSERTING == dml_event) {
+      for (int64_t i = 0; OB_SUCC(ret) && i < all_ai_columns.count(); ++i) {
+        ret = target_columns.push_back(all_ai_columns.at(i));
+      }
+    } else {
+      // UPDATE: invalidate an AI column only when a column referenced by its
+      // expression changed, or when the rowkey itself changed.
+      // Every rowkey column is compared: a composite primary key changes the row
+      // identity when any of its parts changes, not only when the first one does.
+      for (int64_t i = 0; OB_SUCC(ret) && !rowkey_changed
+                          && i < dml_ctdef.column_ids_.count()
+                          && i < dml_ctdef.old_row_.count()
+                          && i < dml_ctdef.new_row_.count(); ++i) {
+        const ObColumnSchemaV2 *column =
+            table_schema->get_column_schema(dml_ctdef.column_ids_.at(i));
+        if (NULL != column && column->is_rowkey_column()) {
+          bool changed = false;
+          if (OB_FAIL(ai_datum_changed(op.get_eval_ctx(),
+                                        dml_ctdef.old_row_.at(i),
+                                        dml_ctdef.new_row_.at(i),
+                                        changed))) {
+          } else if (changed) {
+            rowkey_changed = true;
+          }
+        }
+      }
+      for (int64_t i = 0; OB_SUCC(ret) && i < all_ai_columns.count(); ++i) {
+        const ObColumnSchemaV2 *ai_column = all_ai_columns.at(i);
+        bool need_invalidate = rowkey_changed;
+        ObString expr = ai_column->get_ai_column_expr();
+        if (expr.empty()) {
+          // The expression of a collection (VECTOR) AI column cannot live in the
+          // column schema, because a collection column already uses its extended
+          // type info for the type itself.  It is persisted in the metadata
+          // table instead, so read it back from there to learn which columns the
+          // AI column depends on.  Without it the column would be regenerated
+          // after every update, even when nothing it depends on changed.
+          ObString loaded_expr;
+          int tmp_ret = share::schema::load_ai_column_expr(*op.sql_proxy_,
+                                                            table_id,
+                                                            ai_column->get_column_id(),
+                                                            alloc,
+                                                            loaded_expr);
+          if (OB_SUCCESS == tmp_ret) {
+            expr = loaded_expr;
+          } else {
+            // The metadata is gone, the column cannot be regenerated any more.
+            // Leave the column alone instead of queueing work that cannot run.
+            LOG_WARN("failed to load ai column expression", K(tmp_ret),
+                     K(ai_column->get_column_name_str()));
+            continue;
+          }
+        }
+        for (int64_t j = 0; OB_SUCC(ret) && !need_invalidate
+                            && j < dml_ctdef.column_ids_.count()
+                            && j < dml_ctdef.old_row_.count()
+                            && j < dml_ctdef.new_row_.count(); ++j) {
+          const ObColumnSchemaV2 *column =
+              table_schema->get_column_schema(dml_ctdef.column_ids_.at(j));
+          if (NULL == column || column->is_hidden() || column->is_ai_column()
+              || !ai_expr_references_column(expr, column->get_column_name_str())) {
+            continue;
+          }
+          bool changed = false;
+          if (OB_FAIL(ai_datum_changed(op.get_eval_ctx(),
+                                        dml_ctdef.old_row_.at(j),
+                                        dml_ctdef.new_row_.at(j),
+                                        changed))) {
+          } else if (changed) {
+            need_invalidate = true;
+          }
+        }
+        if (OB_SUCC(ret) && need_invalidate) {
+          ret = target_columns.push_back(ai_column);
+        }
+      }
+    }
+    if (OB_FAIL(ret) || all_ai_columns.empty()
+        || ObDmlEventType::DE_DELETING == dml_event
+        || target_columns.empty()) {
+      // nothing to publish
+    } else {
+      ObSqlString predicate;
+      ObSqlString invalidate_sql;
+      ObSqlString task_sql;
+      const int64_t request_id = next_ai_request_id();
+      const ObString database_name = db_schema->get_database_name_str();
+      if (OB_SUCC(ret) && rowkey_changed) {
+        // The old row no longer exists, drop its pending tasks as well.
+        ObSqlString old_predicate;
+        ObSqlString delete_sql;
+        if (OB_FAIL(build_ai_rowkey_predicate(op, dml_ctdef, *table_schema,
+                                              dml_ctdef.old_row_, alloc, old_predicate))) {
+        } else if (OB_FAIL(build_ai_task_delete_sql(delete_sql, table_id,
+                                                    old_predicate.string()))) {
+        } else if (OB_FAIL(execute_ai_inner_sql(op, session, delete_sql.ptr()))) {
+        }
+      }
+      if (OB_FAIL(ret)) {
+      } else if (OB_FAIL(build_ai_rowkey_predicate(op, dml_ctdef, *table_schema,
+                                            dml_ctdef.new_row_, alloc, predicate))) {
+      } else if (OB_FAIL(build_ai_invalidate_sql(invalidate_sql, *table_schema,
+                                                 database_name, predicate.string(),
+                                                 request_id, target_columns))) {
+      } else if (OB_FAIL(build_ai_task_upsert_sql(task_sql, *table_schema, database_name,
+                                                  table_id, predicate.string(),
+                                                  request_id, target_columns))) {
+      } else if (OB_FAIL(execute_ai_inner_sql(op, session, invalidate_sql.ptr()))) {
+      } else if (OB_FAIL(execute_ai_inner_sql(op, session, task_sql.ptr()))) {
+      }
+    }
+  }
+  return ret;
+}
+
 }  // namespace sql
 }  // namespace oceanbase
