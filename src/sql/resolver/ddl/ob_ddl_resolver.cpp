@@ -30,6 +30,7 @@
 #include "sql/session/ob_local_session_var.h"
 #include "query/ddl/ob_dynamic_partition_policy.h"
 #include "share/rc/ob_server_runtime.h"
+#include "share/schema/ob_ai_column_utils.h"
 #include "share/schema/ob_table_schema.h"
 #include "sql/engine/expr/ob_obj_cast_runtime.h"
 
@@ -2360,6 +2361,7 @@ int ObDDLResolver::resolve_ai_column_attribute(ObColumnSchemaV2 &column,
   } else {
     ParseNode *expr_node = attr_node->children_[0];
     ObString expr_str(expr_node->str_len_, expr_node->str_value_);
+    ObString normalized_expr;
     int8_t sync_mode = 0;  // 0: async, the only supported mode
     int64_t max_retries = 3;
     ParseNode *opt_node = attr_node->children_[1];
@@ -2418,7 +2420,11 @@ int ObDDLResolver::resolve_ai_column_attribute(ObColumnSchemaV2 &column,
     } else if (OB_FAIL(ObSQLUtils::convert_sql_text_to_schema_for_storing(
                    *allocator_, session_info_->get_dtc_params(), expr_str))) {
     } else if (OB_FAIL(check_ai_column_expr(column, expr_str))) {
-    } else if (OB_FAIL(column.set_ai_column_meta(expr_str, sync_mode,
+    } else if (OB_FAIL(build_ai_normalized_expr(*allocator_, column, expr_str,
+                                                normalized_expr))) {
+    } else if (OB_FAIL(column.set_ai_column_meta(normalized_expr.empty() ? expr_str
+                                                                        : normalized_expr,
+                                                 sync_mode,
                                                  static_cast<int8_t>(max_retries)))) {
     } else {
       column.set_ai_column();
@@ -2517,9 +2523,10 @@ int ObDDLResolver::check_ai_column_expr(const ObColumnSchemaV2 &column,
         }
       }
       if (arg_dim > 0 && column_dim > 0 && arg_dim != column_dim) {
-        ret = OB_INVALID_ARGUMENT;
-        LOG_USER_ERROR(OB_INVALID_ARGUMENT,
-                       "ai column vector dimension does not match the AI_EMBED dimension");
+        ret = OB_ERR_INVALID_VECTOR_DIM;
+        LOG_USER_ERROR(OB_ERR_INVALID_VECTOR_DIM,
+                       static_cast<uint32_t>(column_dim),
+                       static_cast<uint32_t>(arg_dim));
       }
     }
   }

@@ -42,6 +42,10 @@
 
 #include "sql/printer/ob_select_stmt_printer.h"
 #include "share/ob_structured_event_logger.h"
+#include "common/mysqlclient/ob_mysql_proxy.h"
+#include "share/schema/ob_ai_column_utils.h"
+#include "share/schema/ob_schema_getter_guard.h"
+#include "share/schema/ob_multi_version_schema_service.h"
 namespace oceanbase
 {
 using namespace common;
@@ -440,6 +444,54 @@ int ObCreateTableExecutor::execute_ctas(ObExecContext &ctx,
   return ret;
 }
 
+// The AI column metadata is kept in the observable table
+// oceanbase.__all_ai_column.  The rows are written right after the DDL has
+// finished, because only then the final table id and the ids of the hidden
+// helper columns are known.
+static int sync_ai_column_metadata_after_ddl(ObExecContext &ctx,
+                                             const uint64_t table_id,
+                                             const ObTableSchema *source_schema = NULL)
+{
+  int ret = OB_SUCCESS;
+  const ObTableSchema *table_schema = NULL;
+  ObSchemaGetterGuard guard;
+  common::ObMySQLProxy *sql_proxy = ctx.get_sql_proxy();
+  ObMultiVersionSchemaService *schema_service = GCTX.schema_service_;
+  LOG_INFO("sync ai column metadata begin", K(table_id), KP(sql_proxy), KP(schema_service));
+  if (OB_INVALID_ID == table_id || OB_ISNULL(sql_proxy) || OB_ISNULL(schema_service)) {
+    ret = OB_ERR_UNEXPECTED;
+    LOG_WARN("invalid argument to sync ai column metadata", K(ret), K(table_id));
+  } else {
+    // The DDL RPC has just finished, make sure the local schema already contains
+    // the final table/column ids before reading them back.
+    int64_t local_version = OB_INVALID_VERSION;
+    int64_t global_version = OB_INVALID_VERSION;
+    if (OB_SUCCESS == schema_service->get_runtime_refreshed_schema_version(local_version)
+        && OB_SUCCESS == schema_service->get_published_schema_version(global_version)
+        && local_version < global_version) {
+      int tmp_ret = schema_service->refresh_and_add_schema();
+      if (OB_SUCCESS != tmp_ret) {
+        LOG_WARN("failed to refresh schema for ai column metadata", K(tmp_ret));
+      }
+    }
+  }
+  if (OB_FAIL(ret)) {
+  } else if (OB_FAIL(schema_service->get_runtime_schema_guard(guard))) {
+    LOG_INFO("failed to get runtime schema guard", K(ret));
+  } else if (OB_FAIL(guard.get_table_schema(table_id, table_schema))) {
+    LOG_INFO("failed to get table schema", K(ret), K(table_id));
+  } else if (OB_ISNULL(table_schema) || !table_schema->has_ai_column()) {
+    LOG_INFO("no ai column to sync", K(ret), K(table_id), KP(table_schema));
+  } else if (OB_FAIL(share::schema::ensure_ai_column_tables(*sql_proxy))) {
+    LOG_INFO("failed to ensure ai column tables", K(ret));
+  } else if (OB_FAIL(share::schema::sync_ai_column_metadata(*sql_proxy, *table_schema,
+                                                            table_id, source_schema))) {
+    LOG_INFO("failed to sync ai column metadata", K(ret), K(table_id));
+  }
+  LOG_INFO("sync ai column metadata finish", K(ret), K(table_id));
+  return ret;
+}
+
 int ObCreateTableExecutor::execute(ObExecContext &ctx, ObCreateTableStmt &stmt)
 {
   int ret = OB_SUCCESS;
@@ -481,6 +533,9 @@ int ObCreateTableExecutor::execute(ObExecContext &ctx, ObCreateTableStmt &stmt)
       }
       if (OB_FAIL(ret)) {
         // do nothing
+      } else if (OB_FAIL(share::schema::append_ai_hidden_columns(
+                     const_cast<ObTableSchema &>(create_table_arg.schema_)))) {
+        LOG_WARN("failed to append ai hidden columns", K(ret));
       } else {
         DEBUG_SYNC(BEFORE_SEND_PARALLEL_CREATE_TABLE);
         if (OB_FAIL(ObDDLExecutorUtil::execute_pcreate_table(
@@ -490,6 +545,12 @@ int ObCreateTableExecutor::execute(ObExecContext &ctx, ObCreateTableStmt &stmt)
       }
     } else {
       if (OB_FAIL(execute_ctas(ctx, stmt))){
+      }
+    }
+    if (OB_SUCC(ret) && table_schema.has_ai_column()) {
+      int tmp_ret = sync_ai_column_metadata_after_ddl(ctx, res.table_id_, &table_schema);
+      if (OB_SUCCESS != tmp_ret) {
+        LOG_WARN("failed to sync ai column metadata after create table", K(tmp_ret));
       }
     }
     SERVER_EVENT_ADD("ddl", "create table execute finish",
@@ -813,7 +874,9 @@ int ObAlterTableExecutor::execute(ObExecContext &ctx, ObAlterTableStmt &stmt)
           }
         }
         if (OB_SUCC(ret)) {
-          if ((obcall::ObAlterTableArg::EXCHANGE_PARTITION == alter_table_arg.alter_part_type_)
+          if (OB_FAIL(share::schema::append_ai_hidden_columns(alter_table_arg))) {
+            LOG_WARN("failed to append ai hidden columns for alter table", K(ret));
+          } else if ((obcall::ObAlterTableArg::EXCHANGE_PARTITION == alter_table_arg.alter_part_type_)
               || (obcall::ObAlterTableArg::EXCHANGE_SUBPARTITION == alter_table_arg.alter_part_type_)) {
             if (OB_FAIL(alter_table_exchange_partition_rpc(exchange_partition_arg,
                                                            res,
@@ -864,6 +927,22 @@ int ObAlterTableExecutor::execute(ObExecContext &ctx, ObAlterTableStmt &stmt)
         } else if (OB_FAIL(ObDDLExecutorUtil::wait_ddl_finish(
             res.task_id_, res.ddl_need_retry_at_executor_, my_session,
             *ctx.get_query_runtime_environment(), ctx.local_command_service(), is_support_cancel))) {
+        }
+      }
+    }
+    const AlterTableSchema &alter_schema = alter_table_arg.alter_table_schema_;
+    const uint64_t alter_table_id = OB_INVALID_ID != alter_table_arg.table_id_
+        ? alter_table_arg.table_id_ : alter_schema.get_table_id();
+    if (OB_SUCC(ret) && OB_INVALID_ID != alter_table_id) {
+      bool has_ai_column = false;
+      for (ObTableSchema::const_column_iterator it = alter_schema.column_begin();
+           !has_ai_column && NULL != it && it != alter_schema.column_end(); ++it) {
+        has_ai_column = NULL != *it && (*it)->is_ai_column();
+      }
+      if (has_ai_column) {
+        int tmp_ret = sync_ai_column_metadata_after_ddl(ctx, alter_table_id, &alter_schema);
+        if (OB_SUCCESS != tmp_ret) {
+          LOG_WARN("failed to sync ai column metadata after alter table", K(tmp_ret));
         }
       }
     }
