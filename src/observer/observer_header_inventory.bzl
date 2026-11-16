@@ -100,6 +100,7 @@ OBSERVER_PRIVATE_HEADERS = [
     "virtual_table/ob_all_disk_stat.h",
     "virtual_table/ob_all_plan_cache_stat.h",
     "virtual_table/ob_all_virtual_activity_metrics.h",
+    "virtual_table/ob_all_virtual_ai_column.h",
     "virtual_table/ob_all_virtual_apply_stat.h",
     "virtual_table/ob_all_virtual_bad_block_table.h",
     "virtual_table/ob_all_virtual_change_stream_refresh_stat.h",

@@ -2420,6 +2420,7 @@ int ObDDLResolver::resolve_ai_column_attribute(ObColumnSchemaV2 &column,
     } else if (OB_FAIL(check_ai_column_expr(column, expr_str))) {
     } else if (OB_FAIL(column.set_ai_column_meta(expr_str, sync_mode,
                                                  static_cast<int8_t>(max_retries)))) {
+      // the descriptor of the AI column is persisted with the column
     } else {
       column.set_ai_column();
       column.set_nullable(true);
@@ -2517,9 +2518,10 @@ int ObDDLResolver::check_ai_column_expr(const ObColumnSchemaV2 &column,
         }
       }
       if (arg_dim > 0 && column_dim > 0 && arg_dim != column_dim) {
-        ret = OB_INVALID_ARGUMENT;
-        LOG_USER_ERROR(OB_INVALID_ARGUMENT,
-                       "ai column vector dimension does not match the AI_EMBED dimension");
+        ret = OB_ERR_INVALID_VECTOR_DIM;
+        LOG_USER_ERROR(OB_ERR_INVALID_VECTOR_DIM,
+                       static_cast<uint32_t>(column_dim),
+                       static_cast<uint32_t>(arg_dim));
       }
     }
   }
