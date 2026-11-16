@@ -91,16 +91,17 @@ int ObAllVirtualAiColumn::fill_scanner()
     for (int64_t t = 0; OB_SUCC(ret) && t < table_ids_.count(); ++t) {
       const ObTableSchema *table_schema = NULL;
       if (OB_FAIL(schema_guard_->get_table_schema(table_ids_.at(t), table_schema))) {
+        // a table which disappeared in the meantime must not break the scan
         SERVER_LOG(WARN, "fail to get table schema", K(ret), K(table_ids_.at(t)));
-      } else if (OB_ISNULL(table_schema) || !table_schema->is_user_table()
-                 || !table_schema->has_ai_column()) {
-        // not a user table, or it has no AI column at all
+        ret = OB_SUCCESS;
+      } else if (OB_ISNULL(table_schema) || !table_schema->is_user_table()) {
+        // not a user table
         continue;
       } else {
         for (ObTableSchema::const_column_iterator it = table_schema->column_begin();
              OB_SUCC(ret) && NULL != it && it != table_schema->column_end(); ++it) {
           const ObColumnSchemaV2 *column = *it;
-          if (OB_ISNULL(column) || !column->is_ai_column()) {
+          if (OB_ISNULL(column)) {
             continue;
           }
           // The descriptor of the AI column is persisted with its hidden
@@ -114,6 +115,16 @@ int ObAllVirtualAiColumn::fill_scanner()
           const ObColumnSchemaV2 *spec_column = spec_name.empty()
                                                 ? NULL
                                                 : table_schema->get_column_schema(spec_name);
+          // A column is an AI column when it carries the AI flag, when the
+          // table owns the hidden result spec column of that column (the
+          // durable marker of an AI column) or when the column keeps the
+          // persisted AI descriptor.
+          const bool is_ai_column = column->is_ai_column()
+                                    || !OB_ISNULL(spec_column)
+                                    || !column->get_ai_column_expr().empty();
+          if (!is_ai_column) {
+            continue;
+          }
           if (OB_ISNULL(spec_column)) {
             // the AI column was added by an ALTER TABLE, which does not create
             // the hidden columns yet
