@@ -2040,26 +2040,42 @@ int ObDmlCgService::fill_table_dml_param(share::schema::ObSchemaGetterGuard *gua
                                                                            table_schema))) {
   } else if (table_schema->is_multivalue_index_aux() &&
             OB_FAIL(fill_multivalue_extra_info_on_table_param(guard, table_schema, das_dml_ctdef))) {
-  } else if (table_schema->is_user_table() && !table_schema->is_index_table()) {
-    // AI columns are maintained asynchronously by the change stream as well.
-    if (table_schema->has_ai_column()) {
-      das_dml_ctdef.table_param_.set_has_async_index(true);
+  } else {
+    // The DML parameter is generated per index table, but AI columns and async
+    // vector indexes belong to the data table, so resolve it first.
+    const ObTableSchema *data_table_schema = table_schema;
+    if (table_schema->is_index_table()) {
+      if (OB_FAIL(guard->get_table_schema(table_schema->get_data_table_id(),
+                                          data_table_schema))) {
+      } else if (OB_ISNULL(data_table_schema)) {
+        ret = OB_SCHEMA_ERROR;
+      }
     }
-    const common::ObIArray<ObAuxTableMetaInfo> &index_infos = table_schema->get_simple_index_infos();
-    for (int64_t i = 0; OB_SUCC(ret) && i < index_infos.count(); ++i) {
-      const ObTableSchema *index_schema = nullptr;
-      if (OB_FAIL(guard->get_table_schema( index_infos.at(i).table_id_, index_schema))) {
-      } else if (OB_NOT_NULL(index_schema) && !index_schema->get_index_params().empty()
-                 && (index_schema->is_vec_delta_buffer_type())) {
-        share::ObVectorIndexParam vec_param;
-        if (OB_SUCC(share::ObVectorIndexUtil::parser_params_from_string(
-                index_schema->get_index_params(),
-                share::ObVectorIndexType::VIT_HNSW_INDEX,
-                vec_param,
-                true))
-            && vec_param.sync_mode_async_) {
-          das_dml_ctdef.table_param_.set_has_async_index(true);
-          break;
+    if (OB_FAIL(ret)) {
+    } else if (OB_NOT_NULL(data_table_schema)
+               && data_table_schema->is_user_table()
+               && !data_table_schema->is_index_table()) {
+      // AI columns are maintained asynchronously by the change stream as well.
+      if (data_table_schema->has_ai_column()) {
+        das_dml_ctdef.table_param_.set_has_async_index(true);
+      }
+      const common::ObIArray<ObAuxTableMetaInfo> &index_infos =
+          data_table_schema->get_simple_index_infos();
+      for (int64_t i = 0; OB_SUCC(ret) && i < index_infos.count(); ++i) {
+        const ObTableSchema *index_schema = nullptr;
+        if (OB_FAIL(guard->get_table_schema( index_infos.at(i).table_id_, index_schema))) {
+        } else if (OB_NOT_NULL(index_schema) && !index_schema->get_index_params().empty()
+                   && (index_schema->is_vec_delta_buffer_type())) {
+          share::ObVectorIndexParam vec_param;
+          if (OB_SUCC(share::ObVectorIndexUtil::parser_params_from_string(
+                  index_schema->get_index_params(),
+                  share::ObVectorIndexType::VIT_HNSW_INDEX,
+                  vec_param,
+                  true))
+              && vec_param.sync_mode_async_) {
+            das_dml_ctdef.table_param_.set_has_async_index(true);
+            break;
+          }
         }
       }
     }
