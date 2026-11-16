@@ -382,6 +382,7 @@ SHARE_UNITY_GROUPS = [
         language = "c++",
         srcs = [
             "src/share/schema/ob_col_desc.cpp",
+            "src/share/schema/ob_ai_column_util.cpp",
             "src/share/schema/ob_probe_new_source.cpp",
             "src/share/schema/ob_column_schema.cpp",
             "src/share/schema/ob_constraint.cpp",
