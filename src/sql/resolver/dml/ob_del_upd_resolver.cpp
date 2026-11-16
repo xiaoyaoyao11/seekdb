@@ -16,6 +16,7 @@
 
 #define USING_LOG_PREFIX SQL_RESV
 #include "ob_del_upd_resolver.h"
+#include "share/schema/ob_ai_column_utils.h"
 #include "sql/resolver/dml/ob_default_value_utils.h"
 #include "sql/resolver/dml/ob_update_stmt.h"
 #include "sql/resolver/dml/ob_insert_stmt.h"
@@ -137,7 +138,11 @@ int ObDelUpdResolver::resolve_assignments(const ParseNode &parse_node,
             }
           } else if (is_generated_column
                      || (ref_expr->is_ai_column()
-                         && (NULL == params_.session_info_ || !params_.session_info_->is_inner()))) {
+                         && (NULL == params_.session_info_
+                             || (!params_.session_info_->is_inner()
+                                 && !params_.session_info_->is_ai_column_internal()
+                                 && !share::schema::is_ai_column_internal_sql(
+                                        params_.session_info_->get_current_query_string()))))) {
             ret = OB_NON_DEFAULT_VALUE_FOR_GENERATED_COLUMN;
             const ObString &column_name = ref_expr->get_column_name();
             const ObString &table_name = ref_expr->get_table_name();
@@ -2346,7 +2351,11 @@ int ObDelUpdResolver::resolve_insert_values(const ParseNode *node,
                                                             is_generated_column))) {
             } else if (is_generated_column
                        || (column_expr->is_ai_column()
-                           && (NULL == params_.session_info_ || !params_.session_info_->is_inner()))) {
+                           && (NULL == params_.session_info_
+                               || (!params_.session_info_->is_inner()
+                                   && !params_.session_info_->is_ai_column_internal()
+                                   && !share::schema::is_ai_column_internal_sql(
+                                          params_.session_info_->get_current_query_string()))))) {
               ret = OB_NON_DEFAULT_VALUE_FOR_GENERATED_COLUMN;
               ColumnItem *orig_col_item = NULL;
               if (NULL != (orig_col_item = del_upd_stmt->get_column_item_by_id(table_info.table_id_, column_id))

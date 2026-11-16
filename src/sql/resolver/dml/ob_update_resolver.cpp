@@ -150,6 +150,11 @@ int ObUpdateResolver::resolve(const ParseNode &parse_tree)
     } else if (OB_FAIL(check_safe_update_mode(update_stmt))) {
     } else { /*do nothing*/ }
   }
+  if (OB_SUCC(ret)) {
+    if (OB_FAIL(mark_ai_column_nested_sql(*update_stmt))) {
+    } else if (OB_FAIL(check_ai_column_strict_read(*update_stmt))) {
+    }
+  }
   return ret;
 }
 

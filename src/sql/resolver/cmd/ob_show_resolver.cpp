@@ -150,6 +150,7 @@ int ObShowResolver::resolve(const ParseNode &parse_tree)
             && OB_UNLIKELY(parse_tree.type_ != T_SHOW_ENGINE)
             && OB_UNLIKELY(parse_tree.type_ != T_SHOW_OPEN_TABLES)
             && OB_UNLIKELY(parse_tree.type_ != T_SHOW_CREATE_USER)
+            && OB_UNLIKELY(parse_tree.type_ != T_SHOW_AI_COLUMNS)
             && OB_UNLIKELY(parse_tree.type_ != T_SHOW_CHECK_TABLE)) {
     ret = OB_ERR_UNEXPECTED;
   } else {
@@ -414,6 +415,37 @@ int ObShowResolver::resolve(const ParseNode &parse_tree)
                   GEN_SQL_STEP_2(ObShowSqlSet::SHOW_COLUMNS, OB_SYS_DATABASE_NAME,OB_ALL_VIRTUAL_TABLE_COLUMN_TNAME, show_table_id);
                 }
               }
+            }
+          }
+        }();
+        break;
+      }
+      case T_SHOW_AI_COLUMNS: {
+        [&] {
+          // SHOW AI COLUMNS FROM <table>
+          // children_[0]: relation factor, children_[1]: from database clause,
+          // children_[2]: show condition (LIKE ...)
+          if (OB_UNLIKELY(parse_tree.num_child_ != 3 || NULL == parse_tree.children_)) {
+            ret = OB_ERR_UNEXPECTED;
+          } else if (OB_UNLIKELY(NULL == parse_tree.children_[0])) {
+            ret = OB_ERR_UNEXPECTED;
+          } else {
+            ObString show_db_name;
+            uint64_t show_db_id = OB_INVALID_ID;
+            ObString show_table_name;
+            uint64_t show_table_id = OB_INVALID_ID;
+            bool is_view = false;
+            show_resv_ctx.condition_node_ = parse_tree.children_[2];
+            show_resv_ctx.stmt_type_ = stmt::T_SHOW_AI_COLUMNS;
+            if (OB_FAIL(resolve_show_from_table(parse_tree.children_[0], parse_tree.children_[1],
+                                                database_name.empty(), T_SHOW_AI_COLUMNS, real_id,
+                                                show_db_name, show_db_id, show_table_name,
+                                                show_table_id, is_view))) {
+            } else if (OB_UNLIKELY(OB_INVALID_ID == show_table_id)) {
+              ret = OB_ERR_UNEXPECTED;
+            } else {
+              GEN_SQL_STEP_1(ObShowSqlSet::SHOW_AI_COLUMNS);
+              GEN_SQL_STEP_2(ObShowSqlSet::SHOW_AI_COLUMNS, show_table_id);
             }
           }
         }();
@@ -1812,6 +1844,7 @@ int ObShowResolver::resolve_like_or_where_clause(ObShowResolverContext &ctx)
                  && parse_tree->type_ != T_SHOW_STATUS
                  && parse_tree->type_ != T_SHOW_PROCEDURE_STATUS
                  && parse_tree->type_ != T_SHOW_FUNCTION_STATUS
+                 && parse_tree->type_ != T_SHOW_AI_COLUMNS
                  && parse_tree->type_ != T_SHOW_TRIGGERS)) {
     // do nothing
   } else {
@@ -2621,5 +2654,21 @@ DEFINE_SHOW_CLAUSE_SET(SHOW_CREATE_USER,
                        "SELECT \"%.*s\" AS `CREATE USER for %.*s@%.*s` FROM DUAL",
                        NULL,
                        NULL);
+DEFINE_SHOW_CLAUSE_SET(SHOW_AI_COLUMNS,
+                       NULL,
+                       "SELECT a.column_name AS `Column`,"
+                       " a.normalized_expr AS `Expression`,"
+                       " a.max_retries AS `Max_retries`,"
+                       " a.state_column_id AS `State_column_id`,"
+                       " a.request_column_id AS `Request_column_id`,"
+                       " a.result_spec_column_id AS `Result_spec_column_id`"
+                       " FROM oceanbase.__all_ai_column a"
+                       " JOIN oceanbase.__all_table t ON t.table_id = a.table_id"
+                       " JOIN oceanbase.__all_database d ON d.database_id = t.database_id"
+                       " WHERE a.table_id = %ld"
+                       " AND 0 = sys_privilege_check('table_acc', d.database_name, t.table_name)"
+                       " ORDER BY a.column_name COLLATE utf8mb4_bin ASC",
+                       NULL,
+                       "Column");
 }/* ns sql*/
 }/* ns oceanbase */

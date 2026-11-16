@@ -2283,6 +2283,8 @@ typedef enum ObItemType
   T_COPY_TO_FILE_OPTION = 4926,
   T_COPY_TO_FILE_OPTION_LIST = 4927,
   T_DESCRIBE_SELECT = 4928,
+  T_ALTER_AI_COLUMN_RETRY = 4929,
+  T_SHOW_AI_COLUMNS = 4930,
   T_MAX //Attention: add a new type before T_MAX
 } ObItemType;
 
@@ -2390,6 +2392,7 @@ typedef enum ObOutlineType
 #define IS_SHOW_STMT(op) (((op) >= T_SHOW_TABLES && (op) <= T_SHOW_GRANTS) || (op) == T_SHOW_TRIGGERS \
                            || (op) == T_SHOW_PROFILE || (op) == T_SHOW_ENGINE || (op) == T_SHOW_OPEN_TABLES \
                            || (op) == T_SHOW_CREATE_USER \
+                           || (op) == T_SHOW_AI_COLUMNS \
                            || (op) == T_SHOW_CHECK_TABLE)
 
 #define EXPR_OP_NUM (T_MAX_OP-T_MIN_OP-1)
