@@ -85,8 +85,8 @@ int ObAllVirtualAiColumn::fill_scanner()
     ret = OB_ERR_UNEXPECTED;
   } else if (OB_ISNULL(schema_guard_)) {
     ret = OB_NOT_INIT;
-  } else if (OB_FAIL(schema_guard_->get_table_ids_in_tenant(table_ids_))) {
-    SERVER_LOG(WARN, "fail to get table ids in tenant", K(ret));
+  } else if (OB_FAIL(schema_guard_->get_table_ids_in_runtime(table_ids_))) {
+    SERVER_LOG(WARN, "fail to get table ids in runtime", K(ret));
   } else {
     for (int64_t t = 0; OB_SUCC(ret) && t < table_ids_.count(); ++t) {
       const ObTableSchema *table_schema = NULL;
