@@ -18,7 +18,6 @@
 #include "ob_expr_ai_complete.h"
 #include "query/ai/ob_ai_endpoint_resolver.h"
 #include "share/rc/ob_server_runtime.h"
-#include "share/schema/ob_ai_column_eval_ctx.h"
 
 using namespace oceanbase::common;
 using namespace oceanbase::sql;
@@ -153,19 +152,8 @@ int ObExprAIComplete::eval_ai_complete(const ObExpr &expr,
     } else {
       ObAIFuncModel model(temp_allocator, *info, *endpoint_info);
       ObString result;
-      ObString converted;
-      // The AI column worker publishes the normalized AI expression (the AI
-      // expression with the type specific instruction prepended) as the system
-      // message of the model request and tells the expression which type the
-      // answer of the model must have.  Without such a context the AI
-      // function is used as it is: the prompt is the only message of the
-      // request and the answer is a string.
-      ObString system_prompt = ::oceanbase::share::schema::ObAiColumnEvalCtx::get_system_prompt();
-      ObObjType target_type = ::oceanbase::share::schema::ObAiColumnEvalCtx::get_target_type();
-      if (OB_FAIL(model.call_completion_with_system_prompt(system_prompt, prompt, config, result))) {
-      } else if (OB_FAIL(ObAIFuncUtils::convert_ai_result_to_target_type(
-                           temp_allocator, target_type, result, converted))) {
-      } else if (OB_FAIL(ObAIFuncUtils::set_string_result(expr, ctx, res, converted))) {
+      if (OB_FAIL(model.call_completion(prompt, config, result))) {
+      } else if (OB_FAIL(ObAIFuncUtils::set_string_result(expr, ctx, res, result))) {
       }
     }
   }

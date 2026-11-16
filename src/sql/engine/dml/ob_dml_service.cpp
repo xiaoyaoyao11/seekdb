@@ -25,7 +25,6 @@
 #include "sql/das/ob_das_lock_op.h"
 #include "sql/das/ob_das_utils.h"
 #include "sql/engine/dml/ob_trigger_handler.h"
-#include "sql/engine/dml/ob_ai_column_task_creator.h"
 #include "share/autoincrement/ob_i_tablet_autoincrement_service.h"
 #include "data_plane/lob/ob_lob_read.h"
 #include "data_plane/transaction/ob_i_transaction_service.h"
@@ -2178,15 +2177,6 @@ int ObDMLService::handle_after_processing_multi_row(ObDMLModifyRowsList *dml_mod
           } else if (t_update == dml_event && OB_FAIL(TriggerHandle::init_param_rows(
               eval_ctx, dml_ctdef.trig_ctdef_, dml_rtdef.trig_rtdef_))) {
           } else if (OB_FAIL(TriggerHandle::do_handle_after_row(op, dml_ctdef.trig_ctdef_, dml_rtdef.trig_rtdef_, dml_event))) {
-          }
-        }
-        // create the AI column tasks of the row.  The tasks are written
-        // through the inner SQL connection, so they take part in the
-        // transaction of this DML statement.
-        if (OB_SUCC(ret) && op.has_ai_column(dml_ctdef)) {
-          if (OB_FAIL(ObAiColumnTaskCreator::create_tasks(modify_row, op))) {
-            LOG_WARN("fail to create the ai column tasks", K(ret),
-                     K(dml_ctdef.das_base_ctdef_.table_id_));
           }
         }
       }
