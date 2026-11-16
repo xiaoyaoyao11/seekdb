@@ -251,6 +251,7 @@ OBSERVER_PRIVATE_HEADERS = [
     "virtual_table/ob_all_virtual_scheduler_running_job.h",
     "virtual_table/ob_all_virtual_show_tables.h",
     "virtual_table/ob_all_virtual_vector_mem_info.h",
+    "virtual_table/ob_probe_new_source.h",
     "virtual_table/ob_all_virtual_warning.h",
     "virtual_table/ob_show_table_status.h",
     "virtual_table/ob_show_tables.h",
