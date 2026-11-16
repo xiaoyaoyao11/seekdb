@@ -2446,6 +2446,34 @@ all_ai_model_endpoint_def = dict(
 )
 def_table_schema(**all_ai_model_endpoint_def)
 
+# The AI column task queue.  One row per (AI column, row) pair which still
+# owes a model result.  The rows are written inside the transaction of the
+# DML which invalidated the AI column, so that they are visible to that
+# transaction and disappear with it on rollback.
+all_ai_column_task_def = dict(
+    owner = 'seekdb.ai_column',
+    table_name = '__all_ai_column_task',
+    table_id = '1131',
+    table_type = 'SYSTEM_TABLE',
+    gm_columns = ['gmt_create', 'gmt_modified'],
+    rowkey_columns = [
+      ('task_id', 'bigint')
+    ],
+
+    is_cluster_private = False,
+    meta_record_in_sys = False,
+    normal_columns = [
+        ('table_id', 'int', 'false'),
+        ('column_id', 'int', 'false'),
+        ('request_id', 'varchar:128', 'false'),
+        ('retry_count', 'int', 'false', '0'),
+        ('rowkey_predicate', 'varchar:2048', 'false'),
+        ('state', 'int', 'false', '0'),
+        ('eligible_ts', 'int', 'false', '0')
+    ]
+)
+def_table_schema(**all_ai_column_task_def)
+
 
 all_objauth_mysql_def = dict(
     owner = 'cjl476581',
@@ -6385,12 +6413,31 @@ def_table_schema(
   ],
 )
 
+# 12565: __all_ai_column
+def_table_schema(
+  owner = 'seekdb.ai_column',
+  table_name    = '__all_ai_column',
+  table_id      = '12565',
+  table_type = 'VIRTUAL_TABLE',
+  gm_columns = [],
+  rowkey_columns = [],
+  normal_columns = [
+    ('table_id', 'int'),
+    ('column_id', 'int'),
+    ('column_name', 'varchar:OB_MAX_COLUMN_NAME_LENGTH', 'false', ''),
+    ('max_retries', 'int', 'false', '0'),
+    ('normalized_expr', 'longtext'),
+    ('state_column_id', 'int', 'false', '0'),
+    ('request_column_id', 'int', 'false', '0'),
+    ('result_spec_column_id', 'int', 'false', '0'),
+  ],
+)
+
 # Reserved position (placeholder before this line)
 # Placeholder suggestion for this section: Use actual table names for placeholders
 ################################################################################
 # End of Mysql Virtual Table (10000, 15000]
-################################################################################
-################################### Placeholder Notice ###################################
+################################################################################################################### Placeholder Notice ###################################
 # Placeholder example: Write the comment at the beginning of the line, indicating which TABLE_ID to occupy and the corresponding name
 # TABLE_ID: TABLE_NAME
 #

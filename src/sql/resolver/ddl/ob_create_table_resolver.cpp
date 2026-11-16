@@ -25,6 +25,7 @@
 #include "sql/optimizer/ob_optimizer_util.h"
 #include "query/vector/ob_vector_index_util.h"
 #include "sql/resolver/ddl/ob_vec_index_builder_util.h"
+#include "share/schema/ob_ai_column_util.h"
 
 namespace oceanbase
 {
@@ -599,6 +600,131 @@ int ObCreateTableResolver::get_resolve_stats_from_table_schema(
   return ret;
 }
 
+// Create the three hidden columns of every AI column of the table:
+//
+//   __ob_ai_state_<col>   the state of the column (PENDING / READY / FAILED)
+//   __ob_ai_request_<col> the id of the request group which produced the value
+//   __ob_ai_spec_<col>    the result spec of the AI expression
+//
+// The hidden columns are appended to @p resolved_cols, so that the caller adds
+// them to the table schema like every other hidden column.
+/**
+ * An AI column must not depend on another AI column.
+ *
+ * The value of an AI column is produced by the asynchronous worker, so it
+ * cannot be the input of another AI column: the worker would have to wait for
+ * the other column, which the asynchronous mode does not support.
+ */
+static int check_ai_column_dependencies(
+    const common::ObSEArray<ObColumnSchemaV2, SEARRAY_INIT_NUM> &resolved_cols,
+    const int64_t user_column_count,
+    common::ObIAllocator &allocator)
+{
+  int ret = OB_SUCCESS;
+  for (int64_t i = 0; OB_SUCC(ret) && i < user_column_count; ++i) {
+    const ObColumnSchemaV2 &ai_column = resolved_cols.at(i);
+    if (!ai_column.is_ai_column()) {
+      continue;
+    }
+    const common::ObString &expr = ai_column.get_ai_column_expr();
+    if (expr.empty()) {
+      continue;
+    }
+    common::ObSEArray<common::ObString, 16> deps;
+    int dep_ret = OB_SUCCESS;
+    if (OB_FAIL(dep_ret = ObAiColumnUtil::collect_dependency_columns(allocator, expr, deps))) {
+      // the dependency set could not be scanned, the check is skipped
+      SQL_RESV_LOG(WARN, "failed to collect the dependencies of an ai column",
+                   K(dep_ret), K(expr));
+    } else {
+      for (int64_t j = 0; OB_SUCC(ret) && j < deps.count(); ++j) {
+        for (int64_t k = 0; OB_SUCC(ret) && k < user_column_count; ++k) {
+          const ObColumnSchemaV2 &other = resolved_cols.at(k);
+          if (!other.is_ai_column()) {
+            continue;
+          }
+          if (0 == other.get_column_name_str().case_compare(deps.at(j))) {
+            ret = OB_NOT_SUPPORTED;
+            SQL_RESV_LOG(WARN, "an ai column must not depend on another ai column",
+                         K(ret), K(other.get_column_name_str()),
+                         K(ai_column.get_column_name_str()));
+            break;
+          }
+        }
+      }
+    }
+  }
+  return ret;
+}
+
+int ObCreateTableResolver::create_ai_column_hidden_columns(
+    common::ObSEArray<ObColumnSchemaV2, SEARRAY_INIT_NUM> &resolved_cols,
+    const int64_t user_column_count)
+{
+  int ret = OB_SUCCESS;
+  for (int64_t i = 0; OB_SUCC(ret) && i < user_column_count; ++i) {
+    ObColumnSchemaV2 &ai_column = resolved_cols.at(i);
+    if (!ai_column.is_ai_column()) {
+      continue;
+    }
+    // The descriptor is copied out of the column, the array may be moved by
+    // the calls which append the hidden columns.
+    const common::ObString ai_name = ai_column.get_column_name_str();
+    const int8_t sync_mode = ai_column.get_ai_sync_mode();
+    const int8_t max_retries = ai_column.get_ai_max_retries();
+    const common::ObString ai_expr = ai_column.get_ai_column_expr();
+    const common::ObString state_name = ObAiColumnUtil::get_state_column_name(
+        *allocator_, ai_name);
+    const common::ObString request_name = ObAiColumnUtil::get_request_column_name(
+        *allocator_, ai_name);
+    const common::ObString spec_name = ObAiColumnUtil::get_result_spec_column_name(
+        *allocator_, ai_name);
+    // The descriptor of the AI column is persisted with the hidden result
+    // spec column: the column schema itself can only keep the descriptor of a
+    // column which is not a collection.
+    common::ObString descriptor;
+    if (OB_FAIL(ObAiColumnUtil::build_meta_descriptor(*allocator_, sync_mode,
+                                                       max_retries, ai_expr,
+                                                       descriptor))) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    } else if (state_name.empty() || request_name.empty() || spec_name.empty()) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    } else if (OB_FAIL(add_ai_column_hidden_column(resolved_cols, state_name, 16))) {
+    } else if (OB_FAIL(add_ai_column_hidden_column(resolved_cols, request_name, 128))) {
+    } else if (OB_FAIL(add_ai_column_hidden_column(resolved_cols, spec_name, 64,
+                                                   descriptor))) {
+    }
+  }
+  return ret;
+}
+
+int ObCreateTableResolver::add_ai_column_hidden_column(
+    common::ObSEArray<ObColumnSchemaV2, SEARRAY_INIT_NUM> &resolved_cols,
+    const common::ObString &column_name,
+    const int32_t data_length,
+    const common::ObString &comment)
+{
+  int ret = OB_SUCCESS;
+  ObColumnSchemaV2 column;
+  column.set_column_id(gen_column_id());
+  column.set_data_type(common::ObVarcharType);
+  column.set_data_length(data_length);
+  column.set_nullable(true);
+  column.set_is_hidden(true);
+  column.set_charset_type(ObCharset::get_default_charset());
+  column.set_collation_type(ObCharset::get_default_collation(ObCharset::get_default_charset()));
+  if (!comment.empty() && OB_FAIL(column.set_comment(comment))) {
+  } else if (OB_FAIL(column.set_column_name(column_name))) {
+  } else if (OB_FAIL(resolved_cols.push_back(column))) {
+  } else {
+    // the hidden column must not collide with a user visible column
+    ObColumnNameHashWrapper name_key(column_name);
+    if (OB_FAIL(column_name_set_.set_refactored(name_key))) {
+    }
+  }
+  return ret;
+}
+
 int ObCreateTableResolver::resolve_table_elements(const ParseNode *node,
                                                   ObArray<int> &index_node_position_list,
                                                   ObArray<int> &foreign_key_node_position_list,
@@ -881,6 +1007,22 @@ int ObCreateTableResolver::resolve_table_elements(const ParseNode *node,
         // won't be here
         ret = OB_ERR_UNEXPECTED;
         SQL_RESV_LOG(WARN, "unexpected branch", K(ret));
+      }
+    }
+
+    if (OB_SUCC(ret)) {
+      // An AI column must not depend on another AI column.
+      if (OB_FAIL(check_ai_column_dependencies(resolved_cols, resolved_cols_count, *allocator_))) {
+        SQL_RESV_LOG(WARN, "invalid ai column dependency", K(ret));
+      }
+    }
+
+    if (OB_SUCC(ret)) {
+      // Every AI column owns three hidden columns: they hold the state of the
+      // column, the id of the request group which produced the value and the
+      // result spec of the AI expression.
+      if (OB_FAIL(create_ai_column_hidden_columns(resolved_cols, resolved_cols_count))) {
+        SQL_RESV_LOG(WARN, "failed to create the hidden columns of the ai columns", K(ret));
       }
     }
 
