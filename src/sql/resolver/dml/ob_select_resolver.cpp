@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL_RESV
+#include "sql/engine/ai_column/ai_column_strict_retry.h"
 #include "sql/resolver/dml/ob_select_resolver.h"
 #include "sql/resolver/dml/ob_del_upd_resolver.h"
 #include "share/ob_time_utility2.h"
@@ -30,6 +31,7 @@
 #include "sql/parser/ob_parser_utils.h"
 
 #include "sql/executor/ob_memory_tracker.h"
+#include "sql/resolver/dml/file_sql_copy_resolver.h"
 namespace oceanbase
 {
 using namespace common;
@@ -1043,6 +1045,12 @@ int ObSelectResolver::resolve(const ParseNode &parse_tree)
       if (OB_FAIL(SMART_CALL(resolve_normal_query(parse_tree)))) {
       }
     }
+  }
+  // Include expanded stars, predicates and ordering before optimization can
+  // discard a zero-row branch. Child SELECT resolvers check their own refs.
+  if (OB_SUCC(ret) && select_stmt && session_info_ && schema_checker_
+      && schema_checker_->get_schema_guard()) {
+    ret = AiColumnStrictRead::check_select(*session_info_, *schema_checker_->get_schema_guard(), *select_stmt);
   }
   if (OB_SUCC(ret) && !cte_ctx_.has_cte_param_list_) {
     cte_ctx_.cte_col_names_.reuse();
@@ -3104,7 +3112,9 @@ int ObSelectResolver::resolve_into_clause(const ParseNode *node)
     } else {
       new(into_item) ObSelectIntoItem();
       into_item->into_type_ = node->type_;
-      if (T_INTO_OUTFILE == node->type_) { // into outfile
+      if (T_INTO_OUTFILE == node->type_ && node->num_child_ == 2) {
+        ret = resolve_file_sql_copy(params_, *node, *select_stmt, *into_item);
+      } else if (T_INTO_OUTFILE == node->type_) { // into outfile
         if (is_in_set_query()) {
           ret = OB_INAPPROPRIATE_INTO;
         } else if (node->num_child_ == 3 && NULL != node->children_[1]

@@ -14,7 +14,11 @@
  * limitations under the License.
  */
 
+#include "sql/resolver/dml/file_sql_resolver.h"
+#include "sql/resolver/dml/file_sql_bound_call.h"
+#include "sql/engine/basic/file_sql_privilege.h"
 #define USING_LOG_PREFIX SQL_RESV
+#include "sql/engine/ai_column/ai_column_strict_retry.h"
 #include "config_bridge.h"
 #include "ob_dml_resolver.h"
 #include "sql/resolver/dml/ob_view_table_resolver.h"
@@ -1820,6 +1824,11 @@ int ObDMLResolver::resolve_basic_column_ref(const ObQualifiedName &q_name, ObRaw
       }
       if (OB_SUCC(ret)) {
         real_ref_expr = column_item->expr_;
+        // Correlation may bind through a parent namespace directly.
+        if (session_info_ && schema_checker_ && schema_checker_->get_schema_guard()) {
+          ret = AiColumnStrictRead::check_column(*session_info_, *schema_checker_->get_schema_guard(),
+              *stmt, column_item->base_tid_, column_item->base_cid_);
+        }
       }
     }
   }
@@ -1836,6 +1845,7 @@ int ObDMLResolver::resolve_basic_column_item(const TableItem &table_item,
   ObColumnRefRawExpr *col_expr = NULL;
   ObSchemaGetterGuard *schema_guard = NULL;
   ColumnItem column_item;
+  if (session_info_ != nullptr && session_info_->is_ai_column_internal_write()) { include_hidden = true; }
   if (NULL == stmt) {
     stmt = get_stmt();
   }
@@ -2247,6 +2257,13 @@ int ObDMLResolver::resolve_column_ref_expr(const ObQualifiedName &q_name, ObRawE
   int ret = OB_SUCCESS;
   if (OB_FAIL(resolve_table_column_expr(q_name, real_ref_expr))) {
     LOG_WARN_IGNORE_COL_NOTFOUND(ret, "resolve table column failed", K(q_name), K(ret));
+  }
+  // Actual expression references only: do not inspect implicit UPDATE/DELETE
+  // storage projections, which include unreferenced AI results.
+  if (OB_SUCC(ret) && real_ref_expr && get_stmt() && session_info_ && schema_checker_
+      && schema_checker_->get_schema_guard()) {
+    ret = AiColumnStrictRead::check_expr(*session_info_, *schema_checker_->get_schema_guard(),
+                                       *get_stmt(), *real_ref_expr);
   }
   return ret;
 }
@@ -3935,6 +3952,54 @@ int ObDMLResolver::resolve_function_table_item(const ParseNode &parse_tree,
   CK (OB_LIKELY(T_TABLE_COLLECTION_EXPRESSION == parse_tree.type_));
   CK (OB_LIKELY(2 == parse_tree.num_child_));
   CK (OB_NOT_NULL(parse_tree.children_[0]));
+  if (OB_SUCC(ret) && file_sql_is_call(parse_tree.children_[0])) {
+    FileSqlPlan plan;
+    FileSqlReader reader;
+    ObString secure_root;
+    ObObj enabled;
+    CK (OB_NOT_NULL(session_info_));
+    CK (OB_NOT_NULL(stmt));
+    CK (OB_NOT_NULL(allocator_));
+    OZ (session_info_->get_sys_variable(share::SYS_VAR_ENABLE_FILE_SQL, enabled));
+    if (OB_SUCC(ret) && (enabled.is_null() || enabled.get_int()==0)) {
+      ret = OB_NOT_SUPPORTED;
+      LOG_USER_ERROR(OB_NOT_SUPPORTED, "file SQL is disabled; SET enable_file_sql=ON");
+    }
+    CK (OB_NOT_NULL(schema_checker_));
+    CK (OB_NOT_NULL(schema_checker_->get_schema_guard()));
+    OZ (file_sql_check_file_privilege(*schema_checker_->get_schema_guard(), *session_info_));
+    OZ (file_sql_parse_bound_call(*parse_tree.children_[0], params_.param_list_, plan));
+    OZ (session_info_->get_secure_file_priv(secure_root));
+    if (OB_SUCC(ret)) {
+      const std::string root = secure_root.empty() ? std::string() : std::string(secure_root.ptr(), secure_root.length());
+      if (OB_FAIL(reader.infer(plan.path, plan.options, root, plan.schema))) {
+        LOG_WARN("file SQL schema inference failed", K(ret), "detail", reader.error().c_str());
+        LOG_USER_ERROR(OB_INVALID_ARGUMENT, reader.error().c_str());
+      }
+    }
+    if (OB_SUCC(ret)) {
+      // File schema and fingerprints cannot be validated by schema-version cache keys.
+      auto &hint=stmt->get_query_ctx()->get_query_hint_for_update().get_global_hint();
+      hint.merge_plan_cache_hint(OB_USE_PLAN_CACHE_NONE);
+      OZ (resolve_sql_expr(*parse_tree.children_[0]->children_[1]->children_[0], function_table_expr));
+      if (OB_SUCC(ret) && OB_ISNULL(item=stmt->create_table_item(*allocator_))) ret=OB_ALLOCATE_MEMORY_FAILED;
+      alias_node=parse_tree.children_[1];
+      if (alias_node!=nullptr) alias_name.assign_ptr(const_cast<char*>(alias_node->str_value_), alias_node->str_len_);
+      else OZ (stmt->generate_func_table_name(*allocator_, alias_name));
+      if (OB_SUCC(ret)) {
+        item->table_name_=alias_name; item->alias_name_=alias_name;
+        item->table_id_=generate_table_id(); item->type_=TableItem::FUNCTION_TABLE;
+        item->function_table_expr_=function_table_expr;
+        const std::string descriptor=plan.encode();
+        OZ (ob_write_string(*allocator_, ObString(descriptor.size(), descriptor.data()), item->file_sql_descriptor_));
+        OZ (stmt->add_table_item(session_info_, item));
+        ObSEArray<ColumnItem, 16> cols;
+        OZ (resolve_function_table_column_item(*item, cols));
+        OX (tbl_item=item);
+      }
+    }
+    return ret;
+  }
   if (OB_SUCC(ret) && (OB_ISNULL(stmt) || OB_ISNULL(allocator_))) {
     ret = OB_NOT_INIT;
   }
@@ -7475,7 +7540,37 @@ int ObDMLResolver::resolve_function_table_column_item(const TableItem &table_ite
   CK (OB_LIKELY(table_item.is_function_table()));
   CK (OB_NOT_NULL(table_item.function_table_expr_));
   if (OB_SUCC(ret)) {
-    if (table_item.function_table_expr_->get_result_type().is_ext()) {
+    if (!table_item.file_sql_descriptor_.empty()) {
+      FileSqlPlan plan;
+      OZ (plan.decode(table_item.file_sql_descriptor_));
+      for (int64_t i=0; OB_SUCC(ret) && i<static_cast<int64_t>(plan.schema.columns.size()); ++i) {
+        const auto &col=plan.schema.columns[i];
+        ObString name;
+        OZ (ob_write_string(*allocator_, ObString(col.name.size(), col.name.data()), name));
+        ColumnItem *item=get_stmt()->get_column_item(table_item.table_id_, name);
+        if (item==nullptr) {
+          ObObjMeta meta;
+          switch (col.type) {
+            case FileSqlType::BIGINT: meta.set_int(); break;
+            case FileSqlType::DOUBLE: meta.set_double(); break;
+            case FileSqlType::BOOLEAN: meta.set_tinyint(); break;
+            case FileSqlType::DATE: meta.set_date(); break;
+            case FileSqlType::DATETIME: meta.set_datetime(); break;
+            default: meta.set_varchar(); meta.set_collation_type(CS_TYPE_UTF8MB4_BIN); meta.set_collation_level(CS_LEVEL_IMPLICIT); break;
+          }
+          ObAccuracy accuracy=ObAccuracy::DDL_DEFAULT_ACCURACY[meta.get_type()];
+          if (meta.is_varchar()) accuracy.set_length(8*1024*1024);
+          if (col.type==FileSqlType::BOOLEAN) { accuracy.set_precision(1); accuracy.set_scale(0); }
+          if (col.type==FileSqlType::DATETIME) accuracy.set_scale(col.scale);
+          OZ (resolve_function_table_column_item(table_item, meta, accuracy, name, OB_APP_MIN_COLUMN_ID+i, item));
+          if (OB_SUCC(ret)) {
+            if (col.nullable) item->expr_->unset_result_flag(NOT_NULL_FLAG);
+            else item->expr_->set_result_flag(NOT_NULL_FLAG);
+          }
+        }
+        if (OB_SUCC(ret)) OZ (col_items.push_back(*item));
+      }
+    } else if (table_item.function_table_expr_->get_result_type().is_ext()) {
       ret = resolve_function_table_column_item_udf(table_item, col_items);
     } else {
       ret = resolve_function_table_column_item_sys_func(table_item, col_items);

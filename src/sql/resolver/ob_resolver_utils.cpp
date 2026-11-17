@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "sql/engine/basic/file_sql_plan.h"
 #define USING_LOG_PREFIX SQL_RESV
 
 #include "config_bridge.h"
@@ -121,6 +122,16 @@ int ObResolverUtils::get_all_function_table_column_names(const TableItem &table_
                                                          ObIArray<ObString> &column_names)
 {
   int ret = OB_SUCCESS;
+  if (!table_item.file_sql_descriptor_.empty()) {
+    FileSqlPlan plan;
+    OZ (plan.decode(table_item.file_sql_descriptor_));
+    for (const auto &col : plan.schema.columns) {
+      ObString name;
+      OZ (ob_write_string(*params.allocator_, ObString(col.name.size(), col.name.data()), name));
+      OZ (column_names.push_back(name));
+    }
+    return ret;
+  }
   ObRawExpr *table_expr = NULL;
   ObPLPackageGuard *package_guard = nullptr;
   const ObUserDefinedType *user_type = NULL;
@@ -1866,7 +1877,7 @@ int ObResolverUtils::resolve_stmt_type(const ParseResult &result, stmt::StmtType
   CK((1 == result.result_tree_->num_child_));
   CK(OB_NOT_NULL(result.result_tree_->children_[0]));
   if (OB_SUCC(ret)) {
-    type = get_stmt_type_by_item_type(result.result_tree_->children_[0]->type_);
+    type = get_stmt_type_by_item_type(ObSQLUtils::get_sql_item_type(result));
   }
   return ret;
 }

@@ -20,6 +20,8 @@
 #include <memory>
 
 #include "ob_select_into_op.h"
+#include "sql/engine/basic/file_sql_copy.h"
+#include "share/ob_lob_access_utils.h"
 #include "sql/engine/cmd/ob_variable_set_executor.h"
 #include "lib/charset/ob_charset_string_helper.h"
 #include "sql/engine/px/ob_px_sqc_handler.h"
@@ -43,6 +45,24 @@ OB_SERIALIZE_MEMBER((ObSelectIntoSpec, ObOpSpec), into_type_, user_vars_, outfil
 
 int ObSelectIntoOp::inner_open()
 {
+  if (file_sql_is_copy(MY_SPEC.external_properties_.str_)) {
+    ObSQLSessionInfo *session=ctx_.get_my_session();
+    if(session==nullptr) return OB_ERR_UNEXPECTED;
+    ObObj enabled; ObString root;
+    int ret=session->get_sys_variable(share::SYS_VAR_ENABLE_FILE_SQL,enabled);
+    if(ret!=OB_SUCCESS) return ret;
+    if(enabled.is_null()||enabled.get_int()==0) return OB_NOT_SUPPORTED;
+    if((ret=session->get_secure_file_priv(root))!=OB_SUCCESS) return ret;
+    if((ret=session->get_sql_select_limit(top_limit_cnt_))!=OB_SUCCESS) return ret;
+    print_params_.tz_info_=session->get_timezone_info();
+    file_sql_copy_=new(std::nothrow) FileSqlCopyWriter;
+    if(file_sql_copy_==nullptr) return OB_ALLOCATE_MEMORY_FAILED;
+    opened_=true;
+    if(root.empty())return OB_INVALID_ARGUMENT;
+    try {
+      return file_sql_copy_->open(MY_SPEC.external_properties_.str_,std::string(root.ptr(),root.length()));
+    }catch(const std::bad_alloc&){file_sql_copy_->close();return OB_ALLOCATE_MEMORY_FAILED;}
+  }
   int ret = OB_SUCCESS;
   ObSQLSessionInfo *session = NULL;
   if (OB_ISNULL(session = ctx_.get_my_session())) {
@@ -77,6 +97,63 @@ int ObSelectIntoOp::inner_open()
     }
   }
   return ret;
+}
+
+int ObSelectIntoOp::execute_file_sql_copy(bool batch)
+{
+  int ret=OB_SUCCESS;int64_t rows=0;
+  if(!is_first_){brs_.size_=0;brs_.end_=true;return batch?OB_SUCCESS:OB_ITER_END;}
+  is_first_=false;
+  auto write_row=[&]()->int {
+    ObEvalCtx::TempAllocGuard guard(eval_ctx_);
+    FileSqlRow row;row.cells.resize(MY_SPEC.select_exprs_.count());
+    for(int64_t i=0;i<MY_SPEC.select_exprs_.count();++i){
+      ObExpr *expr=MY_SPEC.select_exprs_[i];ObDatum *datum=nullptr;
+      int code=expr->eval(eval_ctx_,datum);if(code)return code;
+      auto &cell=row.cells[i];cell.is_null=datum->is_null();if(cell.is_null)continue;
+      if(ob_is_string_type(expr->datum_meta_.type_)){
+        ObString text;
+        code=ObTextStringHelper::read_real_string_data(ctx_,guard.get_allocator(),*datum,expr->datum_meta_,expr->obj_meta_.has_lob_header(),text);
+        if(code)return code;
+        if(text.length()>8*1024*1024)return OB_SIZE_OVERFLOW;
+        cell.text.assign(text.ptr(),text.length());
+      }else{
+        ObObj obj;code=datum->to_obj(obj,expr->obj_meta_);if(code)return code;
+        char buffer[1024];int64_t pos=0;
+        code=obj.print_plain_str_literal(buffer,sizeof(buffer),pos,print_params_);if(code)return code;
+        cell.text.assign(buffer,pos);
+      }
+    }
+    return file_sql_copy_->write(row);
+  };
+  try {
+    if(batch){
+      bool end=false;
+      while(ret==OB_SUCCESS&&!end&&rows<top_limit_cnt_){
+        const ObBatchRows *input=nullptr;
+        clear_evaluated_flag();ret=ctx_.check_status();if(ret)break;
+        ret=child_->get_next_batch(MY_SPEC.max_batch_size_,input);if(ret)break;
+        ObEvalCtx::BatchInfoScopeGuard guard(eval_ctx_);guard.set_batch_size(input->size_);
+        for(int64_t i=0;ret==OB_SUCCESS&&i<input->size_&&rows<top_limit_cnt_;++i){
+          if(input->skip_->at(i))continue;guard.set_batch_idx(i);
+          ret=write_row();if(ret==OB_SUCCESS)++rows;
+        }
+        end=input->end_;
+      }
+    }else{
+      while(ret==OB_SUCCESS&&rows<top_limit_cnt_){
+        clear_evaluated_flag();ret=ctx_.check_status();if(ret)break;
+        ret=child_->get_next_row();if(ret)break;
+        ret=write_row();if(ret==OB_SUCCESS)++rows;
+      }
+    }
+    if(ret==OB_ITER_END)ret=OB_SUCCESS;
+    if(ret==OB_SUCCESS)ret=file_sql_copy_->finish();
+  }catch(const std::bad_alloc&){ret=OB_ALLOCATE_MEMORY_FAILED;}
+  if(ret!=OB_SUCCESS)file_sql_copy_->close();
+  if(ret==OB_SUCCESS && ctx_.get_physical_plan_ctx()!=nullptr)ctx_.get_physical_plan_ctx()->set_affected_rows(rows);
+  brs_.size_=0;brs_.end_=true;
+  return ret==OB_SUCCESS&&!batch?OB_ITER_END:ret;
 }
 
 int ObSelectIntoOp::init_csv_env()
@@ -188,6 +265,7 @@ int ObSelectIntoOp::calc_outfile_path()
 }
 int ObSelectIntoOp::inner_get_next_row()
 {
+  if(file_sql_copy_!=nullptr) return execute_file_sql_copy(false);
   int ret = 0 == top_limit_cnt_ ? OB_ITER_END : OB_SUCCESS;
   int64_t row_count = 0;
   const ObItemType into_type = MY_SPEC.into_type_;
@@ -236,6 +314,7 @@ int ObSelectIntoOp::inner_get_next_row()
 
 int ObSelectIntoOp::inner_get_next_batch(const int64_t max_row_cnt)
 {
+  if(file_sql_copy_!=nullptr) return execute_file_sql_copy(true);
   int ret = OB_SUCCESS;
   const ObBatchRows *child_brs = NULL;
   int64_t batch_size = min(max_row_cnt, MY_SPEC.max_batch_size_);
@@ -324,6 +403,7 @@ int ObSelectIntoOp::inner_rescan()
 
 int ObSelectIntoOp::inner_close()
 {
+  if(file_sql_copy_!=nullptr){delete file_sql_copy_;file_sql_copy_=nullptr;return OB_SUCCESS;}
   int ret = OB_SUCCESS;
   if (OB_NOT_NULL(data_writer_) && OB_FAIL(data_writer_->close_data_writer())) {
   }
@@ -1215,7 +1295,7 @@ int ObSelectIntoOp::check_secure_file_path(ObString file_name)
 #endif
     ret = OB_FILE_NOT_EXIST;
   } else if (OB_FAIL(ObSchemaUtils::get_runtime_varchar_variable(*GCTX.schema_service_,
-                                                                SYS_VAR_SECURE_FILE_PRIV,
+                                                                share::SYS_VAR_SECURE_FILE_PRIV,
                                                                 ctx_.get_allocator(),
                                                                 secure_file_priv))) {
   } else if (OB_FAIL(ObResolverUtils::check_secure_path(secure_file_priv, actual_path))) {
@@ -1275,6 +1355,7 @@ int ObSelectIntoOp::new_data_writer(ObExternalFileWriter *&data_writer)
 
 void ObSelectIntoOp::destroy()
 {
+  delete file_sql_copy_;file_sql_copy_=nullptr;
   if (OB_NOT_NULL(data_writer_)) {
     data_writer_->~ObExternalFileWriter();
   }

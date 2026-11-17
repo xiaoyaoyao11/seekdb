@@ -18,6 +18,8 @@
 
 #include "config_bridge.h"
 #include "ob_sql_trans_control.h"
+#include "sql/engine/ob_exec_context.h"
+#include "sql/engine/ob_physical_plan.h"
 #include "data_plane/tablelock/ob_table_lock.h"
 #include "data_plane/transaction/ob_deadlock.h"
 #include "data_plane/transaction/ob_lock_wait_stat.h"
@@ -26,6 +28,7 @@
 #include "common/storage/ob_sequence.h"
 #include "share/ob_server_struct.h"
 #include "sql/monitor/show_trace/ob_show_trace.h"
+#include "sql/engine/ai_column/ai_column_strict_retry.h"
 
 #ifdef CHECK_SESSION
 #error "redefine macro CHECK_SESSION"
@@ -517,6 +520,8 @@ int ObSqlTransControl::start_stmt(ObExecContext &exec_ctx)
   ObTxDesc *tx_desc = NULL;
   bool is_plain_select = false;
   int64_t nested_level = 0;
+  bool owns_stmt_scope = false;
+  bool owns_stmt_savepoint = false;
   OX (nested_level = exec_ctx.get_nested_level());
   OX (session_id = session->get_server_sid());
   OX (tx_desc = session->get_tx_desc());
@@ -525,6 +530,7 @@ int ObSqlTransControl::start_stmt(ObExecContext &exec_ctx)
   if (OB_SUCC(ret) && !is_plain_select) {
     OZ (stmt_setup_savepoint_(session, das_ctx, plan_ctx, txs, nested_level),
         session_id, "tx_id", data_plane::tx_desc_id(tx_desc));
+    OX (owns_stmt_savepoint = true);
   }
 
   OZ (stmt_setup_snapshot_(session, das_ctx, plan, plan_ctx, txs, exec_ctx),
@@ -547,12 +553,60 @@ int ObSqlTransControl::start_stmt(ObExecContext &exec_ctx)
   }
   if (OB_SUCC(ret) && !session->has_start_stmt()) {
     OZ (session->set_start_stmt());
+    OX (owns_stmt_scope = true);
   }
+  SCN saved_reserved_snapshot;
+  OX (saved_reserved_snapshot = session->get_reserved_snapshot_version());
+  bool owns_snapshot_reservation = false;
   if (OB_SUCC(ret)
       && !ObSQLUtils::is_nested_sql(&exec_ctx)
       && das_ctx.get_snapshot().core_.version_.is_valid()) {
     // Maintain the read snapshot version on the session for multi-version garbage collection.
     session->set_reserved_snapshot_version(das_ctx.get_snapshot().core_.version_);
+    owns_snapshot_reservation = true;
+  }
+
+  // Native statement scope and snapshot reservation now exist; no scan is open.
+  if (OB_SUCC(ret) && OB_FAIL(AiColumnStrictRead::check_statement(exec_ctx))) {
+    // ResultSet will not call end_stmt after a failed start_stmt. Unwind only
+    // this startup, retaining the strict-read error and any parent's scope.
+    const bool is_nested = ObSQLUtils::is_nested_sql(&exec_ctx);
+    if (owns_stmt_scope || is_nested) {
+      const int saved_exec_errcode = exec_ctx.get_errcode();
+      exec_ctx.set_errcode(ret);
+      const int cleanup_ret = end_stmt(exec_ctx, true /* rollback */, false /* will_retry */);
+      exec_ctx.set_errcode(saved_exec_errcode);
+      if (OB_SUCCESS != cleanup_ret) {
+        LOG_WARN("failed to unwind strict-read statement startup", K(ret), K(cleanup_ret));
+      }
+      // Native end_stmt deliberately leaves nested statement scopes alone.
+      if (owns_stmt_scope && is_nested) {
+        const int scope_ret = session->set_end_stmt();
+        if (OB_SUCCESS != scope_ret) {
+          LOG_WARN("failed to end strict-read startup scope", K(ret), K(scope_ret));
+        }
+      }
+    } else {
+      // A non-nested context can already have a caller-owned scope. Native
+      // end_stmt would close it, so roll back just our implicit savepoint.
+      if (owns_stmt_savepoint) {
+        const int cleanup_ret = txs->rollback_to_implicit_savepoint(
+            *session->get_tx_desc(), das_ctx.get_savepoint(),
+            get_stmt_expire_ts(plan_ctx, *session),
+            session->get_trans_result().touches_storage(),
+            decide_stmt_rollback_tx_clean_policy_(ret, false /* will_retry */));
+        if (OB_SUCCESS != cleanup_ret) {
+          LOG_WARN("failed to unwind strict-read startup savepoint", K(ret), K(cleanup_ret));
+        }
+      }
+      session->get_trans_result().reset();
+      data_plane::end_lock_wait_request();
+    }
+    // Restore a displaced parent reservation, including when native cleanup
+    // failed; an ended/rejected statement must not pin its read snapshot.
+    if (owns_snapshot_reservation || (owns_stmt_scope && !is_nested)) {
+      session->set_reserved_snapshot_version(saved_reserved_snapshot);
+    }
   }
 
 bool print_log = false;
@@ -653,6 +707,17 @@ int ObSqlTransControl::stmt_setup_snapshot_(ObSQLSessionInfo *session,
   ObConsistencyLevel cl = plan_ctx->get_consistency_level();
   ObTxReadSnapshot &snapshot = das_ctx.get_snapshot();
   bool can_plain_insert = false;
+  if (AiColumnStrictRead::is_snapshot_probe(exec_ctx)) {
+    const ObTxReadSnapshot &outer = exec_ctx.get_parent_ctx()->get_das_ctx().get_snapshot();
+    if (!outer.is_valid() || outer.is_none_read()) {
+      ret = OB_ERR_UNEXPECTED;
+    } else {
+      // Preserve version AND transaction identity/sequence/write state.
+      // get_read_snapshot here would reopen the RC validation race.
+      ret = snapshot.assign(outer);
+    }
+    return ret;
+  }
   if (cl == ObConsistencyLevel::WEAK || cl == ObConsistencyLevel::FROZEN) {
     SCN snapshot_version = SCN::min_scn();
     if (OB_FAIL(txs->get_weak_read_snapshot_version(session->get_ob_max_read_stale_time(),
@@ -672,7 +737,8 @@ int ObSqlTransControl::stmt_setup_snapshot_(ObSQLSessionInfo *session,
   } else if (!plan->is_plain_select() &&
     OB_FAIL(can_do_plain_insert(session, plan, exec_ctx, can_plain_insert))) {
     TRANS_LOG(WARN, "check can do plain insert failed", KPC(txs));
-  } else if (can_plain_insert) {
+  } else if (can_plain_insert && (!exec_ctx.get_query_ctx()
+      || exec_ctx.get_query_ctx()->ai_column_strict_read_refs_.empty())) {
     das_ctx.set_use_snapshot_opt(true);
     data_plane::initialize_plain_insert_snapshot(
         *session->get_tx_desc(), snapshot);
@@ -707,6 +773,7 @@ int ObSqlTransControl::stmt_refresh_snapshot(ObExecContext &exec_ctx) {
     // so there is no need to refresh the snapshot.
   } else if (OB_FAIL(get_tx_service(session, txs))) {
   } else if (OB_FAIL(stmt_setup_snapshot_(session, das_ctx, plan, plan_ctx, txs, exec_ctx))) {
+  } else if (OB_FAIL(AiColumnStrictRead::check_statement(exec_ctx))) {
   }
   return ret;
 }

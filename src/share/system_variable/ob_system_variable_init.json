@@ -10961,6 +10961,32 @@
     "background_cn": "",
     "ref_url": ""
   },
+  "ai_column_strict_read": {
+    "id": 10755,
+    "name": "ai_column_strict_read",
+    "default_value": "0",
+    "base_value": "0",
+    "data_type": "bool",
+    "info": "Reject statements referencing an AI column with non-ready rows",
+    "flags": "SESSION | NEED_SERIALIZE | INFLUENCE_PLAN",
+    "publish_version": "1.0.0.0",
+    "info_cn": "严格检查语句引用的 AI 列是否全部就绪",
+    "background_cn": "",
+    "ref_url": ""
+  },
+  "enable_file_sql": {
+    "id": 10754,
+    "name": "enable_file_sql",
+    "default_value": "0",
+    "base_value": "0",
+    "data_type": "bool",
+    "info": "Enable read-only local file table functions subject to secure_file_priv",
+    "flags": "SESSION | GLOBAL | NEED_SERIALIZE | INFLUENCE_PLAN",
+    "publish_version": "1.0.0.0",
+    "info_cn": "启用受 secure_file_priv 约束的本地文件表函数",
+    "background_cn": "",
+    "ref_url": ""
+  },
   "ob_sparse_drop_ratio_search": {
     "id": 10753,
     "name": "ob_sparse_drop_ratio_search",

@@ -66,6 +66,7 @@
 #include "observer/ob_server_duty_task.h"
 #include "observer/ob_srv_network_frame.h"
 #include "observer/ob_service.h"
+#include "observer/ai_service/ai_column_worker.h"
 #include "observer/ob_server_reload_config.h"
 #include "storage/slog_ckpt/ob_startup_accel_task_handler.h"
 #include "storage/ddl/ob_ddl_heart_beat_task.h"
@@ -427,6 +428,7 @@ private:
 
   common::ObMySQLProxy sql_proxy_;
   common::ObMySQLProxy ddl_sql_proxy_;
+  AiColumnWorker ai_column_worker_;
 
   // The OceanBase configuration relating to.
   ObServerReloadConfig reload_config_;

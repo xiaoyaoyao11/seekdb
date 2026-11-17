@@ -589,6 +589,10 @@ public:
                          uint64_t id = OB_INVALID_ID);
   int print_all_cursor();
 
+  // Native-only capability: not a system variable and never settable from SQL.
+  bool is_ai_column_internal_write() const { return ai_column_internal_write_; }
+  void set_ai_column_internal_write(bool value) { ai_column_internal_write_ = value; }
+
   inline common::sqlclient::ObISQLConnection *get_inner_conn() { return inner_conn_; }
   inline void set_inner_conn(common::sqlclient::ObISQLConnection *inner_conn)
   {
@@ -970,6 +974,7 @@ private:
   bool pl_ps_protocol_; // send query result use this protocol
 
   common::sqlclient::ObISQLConnection *inner_conn_;
+  bool ai_column_internal_write_ = false;
 
   ObSessionStat session_stat_;
 

@@ -28,6 +28,7 @@ namespace oceanbase
 {
 namespace sql
 {
+class FileSqlCopyWriter;
 class ObSelectIntoOpInput : public ObOpInput
 {
   OB_UNIS_VERSION_V(1);
@@ -100,6 +101,7 @@ class ObSelectIntoOp : public ObOperator
 public:
   ObSelectIntoOp(ObExecContext &exec_ctx, const ObOpSpec &spec, ObOpInput *input)
     : ObOperator(exec_ctx, spec, input),
+      file_sql_copy_(nullptr),
       top_limit_cnt_(INT64_MAX),
       is_first_(true),
       field_str_(),
@@ -195,6 +197,8 @@ public:
   virtual void destroy() override;
 
 private:
+  FileSqlCopyWriter *file_sql_copy_;
+  int execute_file_sql_copy(bool batch);
   int init_env_common();
   int init_csv_env();
   void set_csv_format_options();

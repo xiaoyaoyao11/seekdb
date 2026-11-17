@@ -957,7 +957,7 @@ bool ObSQLUtils::cause_implicit_commit(ParseResult &result)
       && NULL != result.result_tree_->children_
       && NULL != result.result_tree_->children_[0]) {
     ParseNode *root = result.result_tree_->children_[0];
-    ObItemType type = root->type_;
+    ObItemType type = get_sql_item_type(*root);
     if (T_SET_PASSWORD == type
         || T_DROP_USER == type
         || T_CREATE_USER == type
@@ -1025,7 +1025,7 @@ bool ObSQLUtils::is_mysql_ps_not_support_stmt(const ParseResult &result)
       && NULL != result.result_tree_->children_
       && NULL != result.result_tree_->children_[0]) {
     ParseNode *root = result.result_tree_->children_[0];
-    ObItemType type = root->type_;
+    ObItemType type = get_sql_item_type(*root);
     switch (type) {
       case T_SP_CREATE:
       case T_SP_DROP: {
@@ -1047,7 +1047,7 @@ bool ObSQLUtils::is_readonly_stmt(ParseResult &result)
       && NULL != result.result_tree_->children_
       && NULL != result.result_tree_->children_[0]) {
     ParseNode *root = result.result_tree_->children_[0];
-    ObItemType type = root->type_;
+    ObItemType type = get_sql_item_type(*root);
     if (T_SELECT == type && NULL == root->children_[PARSE_SELECT_FOR_UPD]) {
       ret = true;
     } else if (T_EXPLAIN == type
@@ -3281,13 +3281,34 @@ int ObPreCalcExprConstraint::check_is_match(ObDatumObjParam &datum_param,
   return ret;
 }
 
+namespace {
+// Parse-only inspection: SQL traits must not depend on the AI execution engine.
+bool contains_ai_column_retry(const ParseNode *node)
+{
+  if (node == nullptr) return false;
+  if (node->type_ == T_AI_COLUMN_RETRY) return true;
+  for (int i = 0; node->children_ != nullptr && i < node->num_child_; ++i) {
+    if (contains_ai_column_retry(node->children_[i])) return true;
+  }
+  return false;
+}
+}
+
+ObItemType ObSQLUtils::get_sql_item_type(const ParseNode &node)
+{
+  // Classify even mixed RETRY actions as DML before session/transaction checks.
+  // The unchanged ALTER resolver rejects them, without a pre-validation commit.
+  return node.type_ == T_ALTER_TABLE && node.num_child_ > 1 && node.children_ != nullptr
+      && contains_ai_column_retry(node.children_[1]) ? T_UPDATE : node.type_;
+}
+
 ObItemType ObSQLUtils::get_sql_item_type(const ParseResult &result)
 {
   ObItemType type = ObItemType::T_INVALID;
   if (NULL != result.result_tree_
       && NULL != result.result_tree_->children_
       && NULL != result.result_tree_->children_[0]) {
-    type = result.result_tree_->children_[0]->type_;
+    type = get_sql_item_type(*result.result_tree_->children_[0]);
   }
   return type;
 }
@@ -3373,7 +3394,14 @@ bool ObSQLUtils::is_iter_uncommitted_row(ObExecContext *cur_ctx)
 
 bool ObSQLUtils::is_nested_sql(ObExecContext *cur_ctx)
 {
-  return is_pl_nested_sql(cur_ctx) || is_fk_nested_sql(cur_ctx) || is_online_stat_gathering_nested_sql(cur_ctx);
+  // AI COLUMN bookkeeping executes on the business session inside its existing
+  // statement/transaction. Do not let nested close end the outer statement.
+  const bool ai_column_nested = cur_ctx != nullptr
+      && cur_ctx->get_parent_ctx() != nullptr
+      && cur_ctx->get_my_session() != nullptr
+      && cur_ctx->get_my_session()->is_ai_column_internal_write();
+  return ai_column_nested || is_pl_nested_sql(cur_ctx) || is_fk_nested_sql(cur_ctx)
+      || is_online_stat_gathering_nested_sql(cur_ctx);
 }
 
 //bind current execute context to my session,

@@ -570,6 +570,9 @@ public:
                                         const common::ObIArray<OrderItem> &order_keys,
                                         int64_t start_key,
                                         OrderItem &encode_sortkey);
+  // Execution classification may differ from the grammar root (AI COLUMN RETRY).
+  // Keep the original AST intact so ALTER validation still rejects mixed actions.
+  static ObItemType get_sql_item_type(const ParseNode &node);
   static ObItemType get_sql_item_type(const ParseResult &result);
   static bool is_enable_explain_batched_multi_statement();
   static bool is_support_batch_exec(ObItemType type);

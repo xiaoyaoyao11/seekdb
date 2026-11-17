@@ -550,6 +550,17 @@ public:
 struct ObQueryCtx
 {
 public:
+  struct AiColumnStrictReference
+  {
+    uint64_t table_id_;
+    uint64_t column_id_;
+  };
+  // Bound user AI references, shared by all query blocks. AI plans are never
+  // cached; the execution context retains this query context until close.
+  common::ObSEArray<AiColumnStrictReference, 4> ai_column_strict_read_refs_;
+  // Private dynamic extent of runtime readiness probes, not a SQL capability.
+  bool ai_column_strict_probe_active_ = false;
+
   ObQueryCtx()
     : question_marks_count_(0),
       calculable_items_(),
@@ -594,6 +605,8 @@ public:
 
   void reset()
   {
+    ai_column_strict_read_refs_.reset();
+    ai_column_strict_probe_active_ = false;
     question_marks_count_ = 0;
     calculable_items_.reset();
     fetch_cur_time_ = true;

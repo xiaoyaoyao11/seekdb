@@ -293,6 +293,8 @@ struct TableItem
   ObRawExpr *snapshot_query_expr_;
   SnapshotQueryType snapshot_query_type_;
   ObRawExpr *function_table_expr_;
+  // Nonempty only for native file readers; expression remains the literal path.
+  common::ObString file_sql_descriptor_;
   int64_t ddl_schema_version_;
   int64_t ddl_table_id_;
   // table partition

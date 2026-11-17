@@ -436,6 +436,7 @@ public:
   bool is_primary_index_;
   bool is_table_without_pk_;
   bool reserved_advanced_trigger_;
+  bool ai_column_dml_;
   ObExpr *trans_info_expr_;
   bool is_vec_hnsw_index_vid_opt_;
 protected:
@@ -455,6 +456,7 @@ protected:
       is_primary_index_(false),
       is_table_without_pk_(false),
       reserved_advanced_trigger_(false),
+      ai_column_dml_(false),
       trans_info_expr_(nullptr),
       is_vec_hnsw_index_vid_opt_(false)
   { }

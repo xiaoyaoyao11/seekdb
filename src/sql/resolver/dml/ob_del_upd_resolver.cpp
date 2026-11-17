@@ -407,6 +407,19 @@ int ObDelUpdResolver::resolve_assign_columns(const ParseNode &assign_target,
       } else if (OB_ISNULL(base_col_expr)) {
         ret = OB_ERR_UNEXPECTED;
       }
+      if (OB_SUCC(ret) && !session_info_->is_ai_column_internal_write()) {
+        const ColumnItem *item = get_stmt()->get_column_item_by_id(
+            static_cast<ObColumnRefRawExpr *>(col_expr)->get_table_id(),
+            static_cast<ObColumnRefRawExpr *>(col_expr)->get_column_id());
+        const ObColumnSchemaV2 *schema = nullptr;
+        if (item == nullptr) { ret = OB_ERR_UNEXPECTED; }
+        else if (OB_FAIL(get_column_schema(item->base_tid_, item->base_cid_, schema, true))) {}
+        else if (schema == nullptr) { ret = OB_ERR_UNEXPECTED; }
+        else if (schema->is_ai_column() || schema->is_ai_helper_column()) {
+          ret = OB_NOT_SUPPORTED;
+          LOG_USER_ERROR(OB_NOT_SUPPORTED, "direct assignment to AI COLUMN or its protected helper");
+        }
+      }
       if (OB_SUCC(ret) &&
           OB_FAIL(column_list.push_back(static_cast<ObColumnRefRawExpr *>(col_expr)))) {
       }
@@ -2170,7 +2183,14 @@ int ObDelUpdResolver::resolve_insert_columns(const ParseNode *node,
       } else if (!session_info_->get_ddl_info().is_ddl() && OB_HIDDEN_SESS_CREATE_TIME_COLUMN_ID == column_expr->get_column_id()) {
         ret = OB_NOT_SUPPORTED;
         LOG_USER_ERROR(OB_NOT_SUPPORTED, "specify __sess_create_time value");
-      } else if (OB_FAIL(mock_values_column_ref(column_expr))) {
+      } else {
+        const ObColumnSchemaV2 *schema = nullptr;
+        if (OB_FAIL(get_column_schema(table_item->ref_id_, column_expr->get_column_id(), schema, true))) {}
+        else if (schema == nullptr) { ret = OB_ERR_UNEXPECTED; }
+        else if (!session_info_->is_ai_column_internal_write() && (schema->is_ai_column() || schema->is_ai_helper_column())) {
+          ret = OB_NOT_SUPPORTED;
+          LOG_USER_ERROR(OB_NOT_SUPPORTED, "direct assignment to AI COLUMN or its protected helper");
+        } else if (OB_FAIL(mock_values_column_ref(column_expr))) {}
       }
     }//end for
   } else {

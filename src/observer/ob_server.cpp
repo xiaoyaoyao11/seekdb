@@ -920,6 +920,8 @@ void ObServer::destroy()
   FLOG_INFO("destroy config manager success");
 
   if (!has_destroy_ && has_stopped_) {
+    // Also handles init/start failure before the normal shutdown path.
+    ai_column_worker_.destroy();
 
     FLOG_INFO("begin to destroy OB_LOGGER");
     OB_LOGGER.stop();
@@ -1325,6 +1327,11 @@ int ObServer::start()
       FLOG_INFO("server metadata is ready");
     }
 
+    // Native SQL and the durable catalog require bootstrap/replay readiness.
+    if (FAILEDx(ai_column_worker_.start())) {
+      LOG_ERROR("fail to start AI COLUMN worker", KR(ret));
+    }
+
     if (FAILEDx(net_frame_.start())) {
       LOG_ERROR("fail to start net frame", KR(ret));
     } else {
@@ -1345,6 +1352,8 @@ int ObServer::start()
 
     // Return the startup error to inner_main.  wait() terminates the process
     // with _Exit(0), which would turn a failed bootstrap into a false success.
+    ai_column_worker_.stop();
+    ai_column_worker_.wait();
     set_stop();
   } else if (!stop_) {
     GCTX.status_ = SS_SERVING;
@@ -1526,6 +1535,7 @@ bool ObServer::is_stopped()
 
 void ObServer::set_stop()
 {
+  ai_column_worker_.stop();
   net_frame_.sql_nio_stop();
   stop_ = true;
   ob_service_.set_stop();
@@ -1553,6 +1563,10 @@ int ObServer::stop()
   int fail_ret = OB_SUCCESS;
   FLOG_INFO("[OBSERVER_NOTICE] stop observer begin");
   LOG_DBA_INFO_V2(OB_SERVER_STOP_BEGIN, "observer stop begin.");
+
+  // Drain inference/publication before SQL, schema and runtime stop.
+  ai_column_worker_.stop();
+  ai_column_worker_.wait();
 
   if (in_process_) {
     // DDL retries must observe cancellation while schema and SQL services are still available.
@@ -1701,6 +1715,8 @@ int ObServer::wait_no_client()
                  LOCKFILE_EXCLUSIVE_LOCK,
                  0, MAXDWORD, MAXDWORD, &ov)) {
     FLOG_INFO("no clients remaining, exiting");
+    ai_column_worker_.stop();
+    ai_column_worker_.wait();
     net_frame_.sql_nio_stop();
     _Exit(0);
   } else {
@@ -1710,6 +1726,8 @@ int ObServer::wait_no_client()
 #else
   if (flock(clients_fd_, LOCK_EX) == 0) {
     FLOG_INFO("no clients remaining, exiting");
+    ai_column_worker_.stop();
+    ai_column_worker_.wait();
     net_frame_.sql_nio_stop();
     _Exit(0);
   } else {
@@ -1738,6 +1756,8 @@ int ObServer::wait()
   if (in_process_) {
     return stop();
   }
+  ai_column_worker_.stop();
+  ai_column_worker_.wait();
   _Exit(0);
   return ret;
 }
@@ -2036,6 +2056,7 @@ int ObServer::init_sql_proxy()
   int ret = OB_SUCCESS;
   if (OB_FAIL(sql_proxy_.init(false /* is_ddl */))) {
   } else if (OB_FAIL(ddl_sql_proxy_.init(true /* is_ddl */))) {
+  } else if (OB_FAIL(ai_column_worker_.init(sql_proxy_, schema_service_))) {
   }
   return ret;
 }

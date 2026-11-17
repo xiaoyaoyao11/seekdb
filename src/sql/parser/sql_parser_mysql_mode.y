@@ -383,6 +383,7 @@ END_P SET_VAR DELIMITER
 %type <node> subpartition_template_option subpartition_individual_option opt_hash_partition_list hash_partition_list hash_partition_element opt_hash_subpartition_list hash_subpartition_list hash_subpartition_element opt_subpartition_list opt_engine_option
 %type <node> date_unit date_params timestamp_params
 %type <node> drop_table_stmt table_list drop_view_stmt table_or_tables
+%type <node> copy_stmt copy_options copy_option_list copy_option
 %type <node> explain_stmt explainable_stmt format_name kill_stmt create_outline_stmt alter_outline_stmt drop_outline_stmt opt_outline_target
 %type <node> expr_list expr expr_const conf_const simple_expr simple_expr_list expr_or_default bit_expr bool_pri predicate explain_or_desc pl_expr_stmt
 %type <node> column_ref multi_delete_table
@@ -421,6 +422,7 @@ END_P SET_VAR DELIMITER
 %type <node> opt_equal_mark opt_default_mark read_only_or_write not not2
 %type <node> int_or_decimal
 %type <node> opt_column_attribute_list column_attribute column_attribute_list opt_column_default_value opt_column_default_value_list
+%type <node> opt_ai_column_options
 %type <node> show_stmt from_or_in columns_or_fields database_or_schema index_or_indexes_or_keys opt_from_or_in_database_clause opt_show_condition opt_desc_column_option opt_status opt_storage opt_show_engine check_table_options check_table_option
 %type <node> prepare_stmt stmt_name preparable_stmt
 %type <node> variable_set_stmt var_and_val_list var_and_val to_or_eq set_expr_or_default sys_var_and_val
@@ -556,6 +558,7 @@ opt_end_p:
 /* only preparable statement will set question mark size */
 stmt:
     select_stmt             { $$ = $1; question_mark_issue($$, result); }
+  | copy_stmt               { $$ = $1; question_mark_issue($$, result); }
   | insert_stmt             { $$ = $1; question_mark_issue($$, result); }
   | create_table_stmt       {
     $$ = $1;
@@ -6138,8 +6141,24 @@ column_attribute_list column_attribute
   $$ = $1;
 }
 
+opt_ai_column_options:
+WITH '(' expr_list ')'
+{
+  $$ = $3;
+}
+| /*empty*/
+{
+  $$ = NULL;
+}
+;
+
 column_attribute:
-not NULLX
+AI COLUMN '(' expr ')' opt_ai_column_options
+{
+  dup_expr_string($4, result, @4.first_column, @4.last_column);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_AI_COLUMN, 2, $4, $6);
+}
+| not NULLX
 {
   (void)($1) ;
   (void)($2) ; /* make bison mute */
@@ -8903,6 +8922,57 @@ LIMIT limit_expr OFFSET limit_expr
 }
 ;
 
+copy_stmt:
+COPY select_with_parens TO STRING_VALUE copy_options
+{
+  $$=$2;
+  if ($$->children_[PARSE_SELECT_INTO]!=NULL || $$->children_[PARSE_SELECT_INTO_EXTRA]!=NULL) { yyerror(&@1,result,"COPY query cannot contain INTO"); YYERROR; }
+  malloc_non_terminal_node($$->children_[PARSE_SELECT_INTO_EXTRA],result->malloc_pool_,T_INTO_OUTFILE,2,$4,$5);
+}
+| COPY relation_factor TO STRING_VALUE copy_options
+{
+  ParseNode *star=NULL,*projection=NULL,*projects=NULL,*from=NULL,*into=NULL;
+  malloc_terminal_node(star,result->malloc_pool_,T_STAR);
+  malloc_non_terminal_node(projection,result->malloc_pool_,T_PROJECT_STRING,1,star);
+  dup_string_to_node(projection,result->malloc_pool_,"*");
+  malloc_non_terminal_node(projects,result->malloc_pool_,T_PROJECT_LIST,1,projection);
+  malloc_non_terminal_node(from,result->malloc_pool_,T_FROM_LIST,1,$2);
+  malloc_non_terminal_node(into,result->malloc_pool_,T_INTO_OUTFILE,2,$4,$5);
+  malloc_select_node($$,result->malloc_pool_);
+  $$->children_[PARSE_SELECT_SELECT]=projects;
+  $$->children_[PARSE_SELECT_FROM]=from;
+  $$->children_[PARSE_SELECT_INTO_EXTRA]=into;
+}
+;
+copy_options:
+{ $$=NULL; }
+| '(' copy_option_list ')' { merge_nodes($$,result,T_EXPR_LIST,$2); }
+;
+copy_option_list:
+copy_option { $$=$1; }
+| copy_option_list ',' copy_option { malloc_non_terminal_node($$,result->malloc_pool_,T_LINK_NODE,2,$1,$3); }
+;
+copy_option:
+FORMAT relation_name
+{
+  if($2->str_len_!=3 || strncasecmp($2->str_value_,"csv",3)!=0) { yyerror(&@2,result,"COPY supports CSV only"); YYERROR; }
+  $$=NULL;
+}
+| relation_name literal
+{
+  ParseNode *key=NULL;
+  malloc_non_terminal_node(key,result->malloc_pool_,T_COLUMN_REF,3,NULL,NULL,$1);
+  malloc_non_terminal_node($$,result->malloc_pool_,T_OP_EQ,2,key,$2);
+}
+| relation_name
+{
+  ParseNode *key=NULL,*yes=NULL;
+  malloc_non_terminal_node(key,result->malloc_pool_,T_COLUMN_REF,3,NULL,NULL,$1);
+  malloc_terminal_node(yes,result->malloc_pool_,T_BOOL);yes->value_=1;
+  malloc_non_terminal_node($$,result->malloc_pool_,T_OP_EQ,2,key,yes);
+}
+;
+
 into_clause:
 INTO OUTFILE STRING_VALUE opt_charset field_opt line_opt file_opt
 {
@@ -11246,6 +11316,27 @@ relation_factor %prec LOWER_PARENS
   merge_nodes($$, result, T_INDEX_HINT_LIST, $7);
   malloc_non_terminal_node($$, result->malloc_pool_, T_ALIAS, 6, $1, $6, $$, $2, $3, $5);
 }
+| NAME_OB '(' expr_list ')' %prec LOWER_PARENS
+{
+  ParseNode *args = $3;
+  ParseNode *call = NULL;
+  malloc_non_terminal_node(call, result->malloc_pool_, T_FUN_SYS, 2, $1, args);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 2, call, NULL);
+}
+| NAME_OB '(' expr_list ')' relation_name
+{
+  ParseNode *args = $3;
+  ParseNode *call = NULL;
+  malloc_non_terminal_node(call, result->malloc_pool_, T_FUN_SYS, 2, $1, args);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 2, call, $5);
+}
+| NAME_OB '(' expr_list ')' AS relation_name
+{
+  ParseNode *args = $3;
+  ParseNode *call = NULL;
+  malloc_non_terminal_node(call, result->malloc_pool_, T_FUN_SYS, 2, $1, args);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 2, call, $6);
+}
 | TABLE '(' simple_expr ')' %prec LOWER_PARENS
 {
   malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 2, $3, NULL);
@@ -12265,7 +12356,10 @@ explain_or_desc relation_factor opt_desc_column_option
   malloc_non_terminal_node($$, result->malloc_pool_, T_SHOW_COLUMNS, 4, $$, $2, NULL, $3);
 }
 
-| explain_or_desc explainable_stmt { GEN_EXPLAN_STMT($1, $$, 0, 0, $2, NULL, NULL);}
+| explain_or_desc explainable_stmt {
+  GEN_EXPLAN_STMT($1, $$, 0, 0, $2, NULL, NULL);
+  if ($1 != NULL && $2->type_ == T_SELECT) { malloc_terminal_node($$->children_[0], result->malloc_pool_, T_SHOW_COLUMNS); }
+}
 | explain_or_desc PRETTY explainable_stmt { GEN_EXPLAN_STMT($1, $$, 0, T_PRETTY, $3, NULL, NULL);}
 | explain_or_desc PRETTY_COLOR explainable_stmt { GEN_EXPLAN_STMT($1, $$, 0, T_PRETTY_COLOR, $3, NULL, NULL);}
 
@@ -12306,8 +12400,8 @@ explain_or_desc relation_factor opt_desc_column_option
 
 explain_or_desc:
 EXPLAIN {$$ = NULL;}
-| DESCRIBE {$$ = NULL;}
-| DESC  {$$ = NULL;}
+| DESCRIBE {malloc_terminal_node($$, result->malloc_pool_, T_INT); $$->value_=1;}
+| DESC  {malloc_terminal_node($$, result->malloc_pool_, T_INT); $$->value_=1;}
 ;
 
 explainable_stmt:
@@ -14692,7 +14786,24 @@ alter_table_action
 ;
 
 alter_table_action:
-opt_set table_option_list_space_seperated
+NAME_OB AI COLUMN column_name
+{
+  /* RETRY is contextual: ordinary columns/identifiers named retry stay legal. */
+  if ($1->is_input_quoted_ || $1->str_len_ != 5 || strncasecmp($1->str_value_, "retry", 5) != 0) {
+    yyerror(&@1, result, "expected RETRY AI COLUMN"); YYABORT_PARSE_SQL_ERROR;
+  }
+  malloc_non_terminal_node($$, result->malloc_pool_, T_AI_COLUMN_RETRY, 2, $4, NULL);
+}
+| NAME_OB AI COLUMN column_name WHERE expr
+{
+  if ($1->is_input_quoted_ || $1->str_len_ != 5 || strncasecmp($1->str_value_, "retry", 5) != 0) {
+    yyerror(&@1, result, "expected RETRY AI COLUMN"); YYABORT_PARSE_SQL_ERROR;
+  }
+  /* Keep original predicate SQL (including identifier quote provenance). */
+  dup_expr_string($6, result, @6.first_column, @6.last_column);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_AI_COLUMN_RETRY, 2, $4, $6);
+}
+| opt_set table_option_list_space_seperated
 {
   (void)$1;
   merge_nodes($$, result, T_TABLE_OPTION_LIST, $2);

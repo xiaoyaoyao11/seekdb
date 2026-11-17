@@ -2447,6 +2447,32 @@ all_ai_model_endpoint_def = dict(
 def_table_schema(**all_ai_model_endpoint_def)
 
 
+# AI definitions belong to the table DDL transaction. History uses the ordinary
+# schema-version rowkey so schema changes and tombstones can be replayed.
+all_ai_column_def = dict(
+    owner = 'seekdb',
+    table_name = '__all_ai_column',
+    table_id = '1131',
+    table_type = 'SYSTEM_TABLE',
+    gm_columns = ['gmt_create', 'gmt_modified'],
+    rowkey_columns = [('table_id', 'int'), ('column_id', 'int')],
+    is_cluster_private = False,
+    meta_record_in_sys = False,
+    normal_columns = [
+        ('schema_version', 'int', 'false'),
+        ('column_name', 'varchar:OB_MAX_COLUMN_NAME_LENGTH', 'false'),
+        ('max_retries', 'int', 'false'),
+        ('normalized_expr', 'longtext', 'false'),
+        ('state_column_id', 'int', 'false'),
+        ('request_column_id', 'int', 'false'),
+        ('result_spec_column_id', 'int', 'false'),
+        ('definition_version', 'int', 'false'),
+        ('definition_payload', 'longtext', 'false')
+    ]
+)
+def_table_schema(**all_ai_column_def)
+def_table_schema(**gen_history_table_def(1132, all_ai_column_def))
+
 all_objauth_mysql_def = dict(
     owner = 'cjl476581',
     table_name     = '__all_objauth_mysql',
@@ -2466,6 +2492,41 @@ all_objauth_mysql_def = dict(
   )
 def_table_schema(**all_objauth_mysql_def)
 def_table_schema(**gen_history_table_def(1134, all_objauth_mysql_def))
+
+# Canonical binary rowkey identity (not printable SQL) avoids collisions between
+# composite keys, SQL NULL and character collations. The predicate is diagnostic
+# only. Requests are immutable generations, with leases fencing stale workers.
+def_table_schema(
+    owner = 'seekdb',
+    table_name = '__all_ai_column_task',
+    table_id = '1135',
+    table_type = 'SYSTEM_TABLE',
+    gm_columns = ['gmt_create', 'gmt_modified'],
+    is_cluster_private = False,
+    meta_record_in_sys = False,
+    rowkey_columns = [
+        ('table_id', 'int'),
+        ('column_id', 'int'),
+        ('rowkey', 'varbinary:OB_MAX_USER_ROW_KEY_LENGTH'),
+        ('request_id', 'varbinary:128')
+    ],
+    normal_columns = [
+        ('rowkey_predicate', 'longtext', 'true'),
+        ('definition_version', 'int', 'false', 0),
+        ('group_id', 'varbinary:128', 'true'),
+        ('group_membership', 'longtext', 'true'),
+        ('input', 'longtext', 'true'),
+        ('result_spec', 'longtext', 'true'),
+        ('state', 'int', 'false', 0),
+        ('retry_count', 'int', 'false', 0),
+        ('eligible_ts', 'datetime:6', 'true'),
+        ('lease_token', 'varbinary:128', 'true'),
+        ('lease_expiry', 'int', 'false', 0),
+        ('staged_result', 'longtext', 'true'),
+        ('error_code', 'int', 'false', 0),
+        ('error', 'longtext', 'true')
+    ]
+)
 
 
 # Reserved position (placeholder before this line)

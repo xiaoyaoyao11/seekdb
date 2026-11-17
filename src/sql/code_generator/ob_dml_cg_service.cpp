@@ -16,6 +16,7 @@
 
 #define USING_LOG_PREFIX SQL_CG
 #include "ob_dml_cg_service.h"
+#include "share/schema/ai_column_schema.h"
 #include "sql/code_generator/ob_static_engine_cg.h"
 #include "sql/engine/ob_physical_plan.h"
 #include "sql/parser/ob_parser.h"
@@ -2093,6 +2094,20 @@ int ObDmlCgService::generate_dml_base_ctdef(ObLogicalOperator &op,
                                             ObIArray<ObRawExpr*> &new_row)
 {
   int ret = OB_SUCCESS;
+  if (index_dml_info.is_primary_index_) {
+    const ObTableSchema *table = nullptr;
+    ObSchemaGetterGuard *guard = op.get_plan()->get_optimizer_context().get_schema_guard();
+    if (OB_ISNULL(guard)) { ret = OB_ERR_UNEXPECTED; }
+    else if (OB_FAIL(guard->get_table_schema(index_dml_info.ref_table_id_, table))) {}
+    else if (OB_ISNULL(table)) { ret = OB_TABLE_NOT_EXIST; }
+    else {
+      for (int64_t i = 0; i < table->get_column_count(); ++i) {
+        dml_base_ctdef.ai_column_dml_ |= table->get_column_schema_by_idx(i)->is_ai_column();
+      }
+      if (dml_base_ctdef.ai_column_dml_) { cg_.phy_plan_->set_has_nested_sql(true); }
+    }
+  }
+  if (OB_FAIL(ret)) { return ret; }
   dml_base_ctdef.is_primary_index_ = index_dml_info.is_primary_index_;
   dml_base_ctdef.is_vec_hnsw_index_vid_opt_ = index_dml_info.is_vec_hnsw_index_vid_opt_;
   dml_base_ctdef.column_ids_.set_capacity(index_dml_info.column_exprs_.count());

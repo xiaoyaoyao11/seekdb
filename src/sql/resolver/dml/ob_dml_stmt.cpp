@@ -185,8 +185,13 @@ int TableItem::deep_copy(ObIRawExprCopier &expr_copier,
   ddl_schema_version_ = other.ddl_schema_version_;
   ddl_table_id_ = other.ddl_table_id_;
   ref_query_ = other.ref_query_;
+  file_sql_descriptor_ = other.file_sql_descriptor_;
+  if (!other.file_sql_descriptor_.empty() && allocator != nullptr) {
+    OZ (ob_write_string(*allocator, other.file_sql_descriptor_, file_sql_descriptor_));
+  }
   SampleInfo *buf = NULL;
-  if (is_json_table() 
+  if (OB_FAIL(ret)) {
+  } else if (is_json_table()
       && OB_FAIL(deep_copy_json_table_def(*other.json_table_def_, expr_copier, allocator))) {
   } else if (OB_FAIL(expr_copier.copy(other.snapshot_query_expr_, snapshot_query_expr_))) {
   } else if (OB_FAIL(expr_copier.copy(other.function_table_expr_, function_table_expr_))) {

@@ -16,6 +16,7 @@
 
 #define USING_LOG_PREFIX SQL_RESV
 #include "sql/resolver/ddl/ob_create_table_resolver.h"
+#include "sql/resolver/ddl/ai_column_resolver.h"
 #include "sql/resolver/dml/ob_select_resolver.h"
 #include "sql/resolver/ddl/ob_fts_index_builder_util.h"
 #include "sql/rewrite/ob_transform_utils.h"
@@ -894,6 +895,31 @@ int ObCreateTableResolver::resolve_table_elements(const ParseNode *node,
           }
         }
       }
+    }
+
+    // All result columns must exist before checking dependencies (including forward refs).
+    for (int32_t i = 0; OB_SUCC(ret) && RESOLVE_NON_COL != resolve_rule && i < node->num_child_; ++i) {
+      const ParseNode *element = node->children_[i];
+      const ParseNode *attr = element && element->type_ == T_COLUMN_DEFINITION
+          ? find_ai_column_attribute(element) : nullptr;
+      if (attr) {
+        ObColumnSchemaV2 *result = table_schema.get_column_schema(ai_column_detail::text(element->children_[0]->children_[2]));
+        AiColumnDefinition def;
+        ObSEArray<ObString, 4> deps;
+        if (OB_ISNULL(result)) { ret = OB_ERR_UNEXPECTED; }
+        else if (OB_FAIL(resolve_ai_column_attribute(*attr, *result, *allocator_, def, deps, element->children_[1]))) {
+        } else if (OB_FAIL(validate_ai_column_model(*schema_checker_->get_schema_guard(), def))) {
+        } else {
+          result->add_column_flag(AI_COLUMN_FLAG);
+          ObColumnSchemaV2 copy;
+          if (OB_FAIL(copy.assign(*result))) {
+          } else if (OB_FAIL(append_ai_column_helpers(table_schema, copy, def, deps, *allocator_, cur_column_id_))) {
+          }
+        }
+      }
+    }
+    if (OB_SUCC(ret) && RESOLVE_NON_COL != resolve_rule) {
+      ret = validate_ai_column_dependencies(table_schema, *allocator_);
     }
 
     // A table must have at least one column as a visible column

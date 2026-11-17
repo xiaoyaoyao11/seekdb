@@ -782,9 +782,12 @@ def add_column(column, rowkey_id, index_id, part_key_pos, column_id=0, is_hidden
       column_type = 'ObLongTextType'
       column_length = 0
       column_collation_type = 'CS_TYPE_BINARY'
-    elif column_type == 'datetime':
+    elif column_type == 'datetime' or column_type.startswith('datetime:'):
+      s = column_type.split(':')
       column_type = 'ObDateTimeType'
       column_length = 0
+      if len(s) != 1:
+        column_scale = s[1]
 
   if len(column) >= 3:
     is_nullable = column[2]

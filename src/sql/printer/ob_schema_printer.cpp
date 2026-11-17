@@ -16,6 +16,7 @@
 
 #define USING_LOG_PREFIX SHARE_SCHEMA
 #include "sql/printer/ob_schema_printer.h"
+#include "share/schema/ai_column_schema.h"
 #include "share/ob_autoincrement_service.h"
 #include "sql/resolver/expr/ob_raw_expr_util.h"
 
@@ -231,7 +232,39 @@ int ObSchemaPrinter::print_table_definition_columns(const ObTableSchema &table_s
             SHARE_SCHEMA_LOG(WARN, "fail to print geometry srid", K(ret), K(srid));
           }
         }
-        if (OB_SUCC(ret) && !col->is_generated_column()) {
+        if (OB_SUCC(ret) && col->is_ai_column()) {
+          ObSEArray<AiColumnDefinition, 4> definitions;
+          if (OB_FAIL(list_ai_column_definitions(table_schema, allocator, definitions))) {
+          } else {
+            bool found = false;
+            for (int64_t i = 0; OB_SUCC(ret) && i < definitions.count(); ++i) {
+              const AiColumnDefinition &d = definitions.at(i);
+              if (d.column_id == col->get_column_id()) {
+                found = true;
+                ObSqlString expression;
+                if (OB_FAIL(expression.append(d.embedding ? "AI_EMBED(_utf8mb4 X'" : "AI_COMPLETE(_utf8mb4 X'"))) {
+                }
+                // A charset-introduced hex string is native T_VARCHAR and
+                // preserves exact model bytes under either backslash mode.
+                for (int64_t j = 0; OB_SUCC(ret) && j < d.model_name.length(); ++j) {
+                  const unsigned char ch = static_cast<unsigned char>(d.model_name.ptr()[j]);
+                  if (OB_FAIL(expression.append_fmt("%02x", static_cast<unsigned int>(ch)))) {
+                  }
+                }
+                if (OB_FAIL(ret)) {
+                } else if (OB_FAIL(expression.append_fmt("',%.*s", d.input_expr.length(), d.input_expr.ptr()))) {
+                } else if (d.embedding && OB_FAIL(expression.append_fmt(",%ld", d.vector_dimension))) {
+                } else if (OB_FAIL(expression.append(")"))) {
+                } else if (OB_FAIL(databuff_printf(buf, buf_len, pos,
+                    " AI COLUMN (%.*s) WITH (sync_mode='async',max_retries=%ld)",
+                    expression.length(), expression.ptr(), d.max_retries))) {
+                }
+              }
+            }
+            if (OB_SUCC(ret) && !found) ret = OB_INVALID_DATA;
+          }
+        }
+        if (OB_SUCC(ret) && !col->is_generated_column() && !col->is_ai_column()) {
           //if column is not permit null and default value does not specify , don't  display DEFAULT NULL
           if (OB_SUCC(ret)) {
             if (!(ObNullType == col->get_cur_default_value().get_type() && !col->is_nullable())

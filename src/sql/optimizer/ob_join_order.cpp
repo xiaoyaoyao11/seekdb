@@ -8535,6 +8535,12 @@ int ObJoinOrder::generate_function_table_paths()
     } else if (OB_FAIL(func_path->nl_params_.assign(nl_params))) {
     } else {
       func_path->value_expr_ = function_table_expr;
+      if (!table_item->file_sql_descriptor_.empty()) {
+        // Local filesystem descriptors must never be scheduled onto remote/PX workers.
+        func_path->strong_sharding_ = get_plan()->get_optimizer_context().get_local_sharding();
+        func_path->parallel_ = 1;
+        func_path->available_parallel_ = 1;
+      }
     }
     if (OB_FAIL(ret)) {
     } else if (OB_FAIL(func_path->estimate_cost())) {

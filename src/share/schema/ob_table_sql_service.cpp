@@ -20,6 +20,7 @@
 #include "share/ob_global_stat_proxy.h"
 #include "share/schema/ob_constraint.h"
 #include "share/schema/ob_partition_sql_helper.h"
+#include "share/schema/ai_column_sql_service.h"
 #include "share/ob_timezone_mgr.h"
 
 namespace oceanbase
@@ -697,6 +698,10 @@ int ObTableSqlService::drop_table(const ObTableSchema &table_schema,
     }
   }
 
+  if (OB_SUCC(ret) && OB_FAIL(AiColumnSqlService::delete_definitions(
+          sql_client, table_id, new_schema_version))) {
+  }
+
   // delete from __all_table_stat, __all_monitor_modified, __all_column_usage, __all_optstat_user_prefs
   if (OB_SUCC(ret)) {
     if (OB_FAIL(delete_from_all_table_stat(sql_client, table_id))) {
@@ -889,6 +894,8 @@ int ObTableSqlService::insert_single_column(
   if (OB_FAIL(check_ddl_allowed(new_table_schema))) {
   } else if (OB_FAIL(add_single_column(sql_client, new_column_schema))) {
   }
+  // AI metadata is reconciled by the final table-attribute/options write,
+  // not here: subsequent ADD COLUMN helpers still have provisional IDs.
   if (OB_SUCC(ret)) {
     if (new_column_schema.is_autoincrement()) {
       if (OB_FAIL(add_sequence(sql_client,
@@ -973,6 +980,8 @@ int ObTableSqlService::update_single_column(
     }
   }
 
+  // AI definitions are reconciled with the final table schema, after all
+  // per-column updates (including helper descriptors) have been persisted.
   // insert updated column to __all_column_history
   if (OB_SUCC(ret)) {
     const bool only_history = true;
@@ -2032,6 +2041,13 @@ int ObTableSqlService::delete_single_column(
     }
   }
 
+  // The remaining helpers may still be in the intermediate table schema.
+  // Delete by the original result ID; reconcile complete definitions only at
+  // the final table-attribute/options write below.
+  if (OB_SUCC(ret) && OB_FAIL(AiColumnSqlService::delete_definition(
+          sql_client, table_id, column_id, new_schema_version))) {
+  }
+
   // log delete column
   if (OB_SUCC(ret) && record_ddl_operation) {
     ObSchemaOperation opt;
@@ -2163,6 +2179,7 @@ int ObTableSqlService::batch_create_table(ObIArray<ObTableSchema> &tables,
       for (int64_t i = 0; i < tables.count() && OB_SUCC(ret); i++) {
         if (is_inner_table(tables.at(i).get_table_id())) {
         } else if (OB_FAIL(add_foreign_key(sql_client, tables.at(i), false/*only_history*/))) {
+        } else if (OB_FAIL(AiColumnSqlService::sync_definitions(sql_client, tables.at(i)))) {
         }
       }
       time_guard.click("add_foreign_key");
@@ -2465,6 +2482,9 @@ int ObTableSqlService::update_table_attribute(ObISQLClient &sql_client,
     }
   }
 
+  // Reconcile metadata using final ALTER IDs, in the same DDL transaction.
+  if (OB_SUCC(ret) && OB_FAIL(AiColumnSqlService::sync_definitions(sql_client, new_table_schema))) {
+  }
   // add updated table to __all_table_history
   if (OB_SUCC(ret)) {
     const bool only_history = true;
@@ -3170,7 +3190,8 @@ int ObTableSqlService::gen_column_dml_without_check(
       cur_default_value.reset();
     }
     ObString bin_extended_type_info;
-    if (OB_SUCC(ret) && (column.is_enum_or_set() || column.is_collection())) {
+    if (OB_SUCC(ret) && (column.is_enum_or_set() || column.is_collection()
+        || column.is_ai_helper_column())) {
       int64_t pos = 0;
       extended_type_info_buf = static_cast<char *>(allocator.alloc(OB_MAX_VARBINARY_LENGTH));
       if (OB_ISNULL(extended_type_info_buf)) {
@@ -4081,6 +4102,9 @@ int ObTableSqlService::inner_update_table_options_(ObISQLClient &sql_client,
     } else if (affected_rows > 1) {
       ret = OB_ERR_UNEXPECTED;
     }
+  }
+  // Reconcile ALTER options only after all column ID remapping is complete.
+  if (OB_SUCC(ret) && OB_FAIL(AiColumnSqlService::sync_definitions(sql_client, new_table_schema))) {
   }
   // add to __all_table_history table
   if (OB_SUCC(ret)) {
