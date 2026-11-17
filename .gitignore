@@ -64,6 +64,7 @@ build/
 build_*/
 build_version.c
 build_version.cpp
+local-results/
 compile
 !test/compile/
 !test/compile/**

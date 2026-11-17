@@ -492,6 +492,22 @@ static std::vector<Tok> lex(const std::string &sql) {
   while (p < sql.size()) {
     unsigned char c = static_cast<unsigned char>(sql[p]);
     if (std::isspace(c)) { ++p; continue; }
+    // A comment runs to the end of the line.  "--" needs a space after it in
+    // MySQL, but the looser rule is accepted here.
+    if (c == '-' && p + 1 < sql.size() && sql[p + 1] == '-') {
+      while (p < sql.size() && sql[p] != '\n') ++p;
+      continue;
+    }
+    if (c == '#') {
+      while (p < sql.size() && sql[p] != '\n') ++p;
+      continue;
+    }
+    if (c == '/' && p + 1 < sql.size() && sql[p + 1] == '*') {
+      p += 2;
+      while (p + 1 < sql.size() && !(sql[p] == '*' && sql[p + 1] == '/')) ++p;
+      p = p + 2 <= sql.size() ? p + 2 : sql.size();
+      continue;
+    }
     if (std::isalpha(c) || c == '_') {
       size_t a = p++;
       while (p < sql.size()) {
