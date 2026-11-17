@@ -706,8 +706,12 @@ struct Cond {
 struct OrderSpec {
   bool present = false;
   bool desc = false;
-  int kind = 0;  // 1 column, 2 select item
+  int kind = 0;  // 1 column, 2 select item, 3 distance expression
   int ref = -1;
+  // The distance of the ORDER BY expression, when it is not one of the
+  // projected items.
+  int dist_col = -1;
+  std::vector<float> dist_query;
 };
 
 struct Reply {
@@ -1500,11 +1504,24 @@ private:
       order.present = true;
       if (ps.eat_kw("L2_DISTANCE")) {
         ps.expect_punct("(");
-        ps.ident(); ps.expect_punct(",");
-        parse_vector_literal(ps, 0);
+        std::string vec_col = ps.ident();
+        ps.expect_punct(",");
+        std::vector<float> query = parse_vector_literal(ps, 0);
         ps.expect_punct(")");
+        // The projected distance is preferred, but the expression may also be
+        // the only mention of the distance.
         order.kind = 2; order.ref = -1;
         for (size_t i = 0; i < items.size(); ++i) if (items[i].kind == 1) { order.ref = static_cast<int>(i); break; }
+        if (order.ref < 0) {
+          int ci = t->col_index(vec_col);
+          if (ci < 0 || t->cols[ci].type != T_VECTOR)
+            throw DbError("invalid_argument", "L2_DISTANCE requires a vector column");
+          if (static_cast<int>(query.size()) != t->cols[ci].len)
+            throw DbError("dimension_mismatch", "query vector dimension mismatch");
+          order.kind = 3;
+          order.dist_col = ci;
+          order.dist_query = std::move(query);
+        }
       } else {
         std::string ref = ps.ident();
         bool found = false;
@@ -1581,6 +1598,8 @@ private:
       if (order.present) {
         if (order.kind == 2 && order.ref >= 0 && items[order.ref].kind == 1) {
           c.num = distance_of(*vr.row, items[order.ref].col, items[order.ref].query);
+        } else if (order.kind == 3) {
+          c.num = distance_of(*vr.row, order.dist_col, order.dist_query);
         } else if (order.kind == 1) {
           const Column &col = t->cols[order.ref];
           const Cell &cell = vr.row->at(order.ref);
