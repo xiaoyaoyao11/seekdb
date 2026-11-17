@@ -1,4 +1,4 @@
 mkdocs-material
 mkdocs-static-i18n
 mkdocs-git-authors-plugin
-./linux_build_probe
+./docs/linux_build_probe

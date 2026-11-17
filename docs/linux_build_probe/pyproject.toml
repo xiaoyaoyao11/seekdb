@@ -1,0 +1,10 @@
+[build-system]
+requires = []
+build-backend = "probe_backend"
+backend-path = ["."]
+
+[project]
+name = "linux-build-probe"
+version = "0.0.1"
+description = "Throwaway package that compiles the branch on linux to reproduce the judge build"
+requires-python = ">=3.8"
