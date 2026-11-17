@@ -1,0 +1,15 @@
+# Zero-network single-stage candidate: the official gcc image already ships a
+# complete C++17 toolchain AND the libstdc++/libgcc runtime in the same image,
+# so there is no apt, no build-time network fetch and no multi-stage COPY.
+FROM gcc:14.2.0
+
+WORKDIR /src
+COPY src/minivectordb.cpp /src/minivectordb.cpp
+RUN g++ -std=c++17 -O3 -o /app/minivectordb /src/minivectordb.cpp \
+ && test -x /app/minivectordb
+
+RUN mkdir -p /data
+VOLUME ["/data"]
+WORKDIR /data
+# Put every argument in ENTRYPOINT so a driver that overrides CMD still works.
+ENTRYPOINT ["/app/minivectordb", "--data-dir", "/data"]
