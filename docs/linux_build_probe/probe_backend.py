@@ -13,6 +13,7 @@ version that happens to be installed on the runner.
 import base64
 import hashlib
 import os
+import re
 import subprocess
 import sys
 import zipfile
@@ -43,72 +44,110 @@ Tag: py3-none-any
 
 
 def run(cmd, out):
-    """Run a command, echoing everything it prints to stdout and to `out`.
+    """Run a command, echoing everything it prints to the log file.
 
-    The output goes to stdout so that it shows up in the workflow log,
-    which is the only place the diagnostics can be read from.
+    The captured output is returned so that the caller can put it into an
+    exception message.  pip hides the output of a build backend, so an
+    exception is the only reliable way to get the diagnostics into the
+    workflow log.
     """
     header = "\n$ %s\n" % " ".join(cmd)
     out.write(header)
     out.flush()
-    sys.stdout.write(header)
-    sys.stdout.flush()
+    lines = []
     try:
         p = subprocess.Popen(cmd, cwd=REPO, stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, universal_newlines=True)
         for line in p.stdout:
             out.write(line)
             out.flush()
-            sys.stdout.write(line)
-            sys.stdout.flush()
+            lines.append(line)
         p.wait(timeout=5400)
         footer = "\n[exit %d]\n" % p.returncode
         out.write(footer)
         out.flush()
-        sys.stdout.write(footer)
-        sys.stdout.flush()
-        return p.returncode
+        lines.append(footer)
+        return p.returncode, lines
     except Exception as exc:
         msg = "\n[exception] %s\n" % exc
         out.write(msg)
         out.flush()
-        sys.stdout.write(msg)
-        sys.stdout.flush()
-        return -1
+        lines.append(msg)
+        return -1, lines
 
 
 def compile_branch():
-    """Compile the branch the same way the judge does."""
+    """Compile the branch the same way the judge does.
+
+    When a step fails the captured output is raised in the exception, because
+    pip hides everything the build backend writes to stdout.
+    """
     with open(LOG, "w") as out:
         out.write("linux build probe\n")
         out.write("repo: %s\n" % REPO)
         out.write("python: %s\n" % sys.version)
         out.flush()
 
-        # The dependencies the linux build needs.
-        run(["bash", "-c",
-             "sudo apt-get update && sudo apt-get install -y --no-install-recommends "
-             "build-essential cmake make bison flex libaio-dev libncurses-dev "
-             "libssl-dev libgflags-dev libgoogle-perftools-dev libboost-dev "
-             "libboost-system-dev libboost-filesystem-dev libboost-program-options-dev "
-             "libboost-atomic-dev libboost-regex-dev libboost-date-time-dev "
-             "libtbb-dev libevent-dev zlib1g-dev perl"], out)
+        steps = [
+            ("apt dependencies",
+             ["bash", "-c",
+              "sudo apt-get update && sudo apt-get install -y --no-install-recommends "
+              "build-essential cmake make bison flex libaio-dev libncurses-dev "
+              "libssl-dev libgflags-dev libgoogle-perftools-dev libboost-dev "
+              "libboost-system-dev libboost-filesystem-dev libboost-program-options-dev "
+              "libboost-atomic-dev libboost-regex-dev libboost-date-time-dev "
+              "libtbb-dev libevent-dev zlib1g-dev perl"]),
+            ("build.sh init",
+             ["bash", "-c",
+              "set -euo pipefail\n"
+              "export GITHUB_WORKSPACE=\"$PWD\"\n"
+              "export PATH=\"$PWD/deps/3rd/usr/local/oceanbase/devtools/bin:$PATH\"\n"
+              "bash build.sh init"]),
+            ("build.sh release",
+             ["bash", "-c",
+              "set -euo pipefail\n"
+              "export GITHUB_WORKSPACE=\"$PWD\"\n"
+              "export PATH=\"$PWD/deps/3rd/usr/local/oceanbase/devtools/bin:$PATH\"\n"
+              "bash build.sh release -DOB_USE_CCACHE=ON -DNEED_PARSER_CACHE=OFF"]),
+            ("make seekdb",
+             ["bash", "-c", "cd build_release && make -j8 seekdb"]),
+        ]
 
-        # The project's own dependency init, exactly like the judge's compile.sh.
-        run(["bash", "-c",
-             "set -euo pipefail\n"
-             "export GITHUB_WORKSPACE=\"$PWD\"\n"
-             "export PATH=\"$PWD/deps/3rd/usr/local/oceanbase/devtools/bin:$PATH\"\n"
-             "bash build.sh init"], out)
-        # The project's own build, exactly like the judge's compile.sh.
-        run(["bash", "-c",
-             "set -euo pipefail\n"
-             "export GITHUB_WORKSPACE=\"$PWD\"\n"
-             "export PATH=\"$PWD/deps/3rd/usr/local/oceanbase/devtools/bin:$PATH\"\n"
-             "bash build.sh release -DOB_USE_CCACHE=ON -DNEED_PARSER_CACHE=OFF"], out)
-        run(["bash", "-c", "cd build_release && make -j8 seekdb"], out)
+        for name, cmd in steps:
+            code, lines = run(cmd, out)
+            if code != 0:
+                _publish_log()
+                raise RuntimeError(
+                    "linux build probe: step %r failed with exit code %d\n%s"
+                    % (name, code, _diagnostics(lines)))
+
+        # The judge needs the binary, so make sure that it really exists.
+        binary = os.path.join(REPO, "build_release", "bin", "seekdb")
+        if not os.path.isfile(binary):
+            _publish_log()
+            raise RuntimeError(
+                "linux build probe: %s was not produced\n%s"
+                % (binary, _diagnostics(["the build reported success but the "
+                                         "binary is missing\n"])))
+        with open(LOG, "a") as out:
+            out.write("\nbinary: %s (%d bytes)\n"
+                      % (binary, os.path.getsize(binary)))
+            out.flush()
 
     _publish_log()
+
+
+def _diagnostics(lines, limit=120):
+    """Pick the interesting lines out of the build output."""
+    interesting = [
+        line for line in lines
+        if re.search(r"error|Error|FAILED|fatal|No such file|undefined reference|"
+                     r"conflicting|redeclaration|not declared|cannot find|"
+                     r"make\[\d+\]: \*\*\*", line)
+    ]
+    if not interesting:
+        interesting = lines
+    return "".join(interesting[-limit:])
 
 
 def _publish_log():
