@@ -55,7 +55,11 @@ static void platform_fsync(FILE *f) {
 }
 static void platform_binary_stdout() {}
 static void platform_truncate(const std::string &path, std::uint64_t len) {
-  truncate(path.c_str(), static_cast<off_t>(len));
+  // truncate() reports failure through its return value; the caller has
+  // already checked the file state, so the result is only worth logging.
+  if (truncate(path.c_str(), static_cast<off_t>(len)) != 0) {
+    std::fprintf(stderr, "minivectordb: cannot truncate %s\n", path.c_str());
+  }
 }
 #endif
 
