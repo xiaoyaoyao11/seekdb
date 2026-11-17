@@ -108,6 +108,37 @@ def compile_branch():
              "bash build.sh release -DOB_USE_CCACHE=ON -DNEED_PARSER_CACHE=OFF"], out)
         run(["bash", "-c", "cd build_release && make -j8 seekdb"], out)
 
+    _publish_log()
+
+
+def _publish_log():
+    """Make the build diagnostics visible to whoever reads the run.
+
+    pip swallows the output of the build backend, so the log is copied into
+    the job summary and its tail is printed on stdout.
+    """
+    try:
+        with open(LOG, "r", errors="replace") as f:
+            content = f.read()
+    except OSError as exc:
+        content = "cannot read %s: %s\n" % (LOG, exc)
+
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        try:
+            with open(summary, "a") as f:
+                f.write("## linux build probe\n\n```\n")
+                f.write(content)
+                f.write("\n```\n")
+        except OSError:
+            pass
+
+    tail = content[-20000:]
+    sys.stdout.write("\n===== linux build log (tail) =====\n")
+    sys.stdout.write(tail)
+    sys.stdout.write("\n===== end of linux build log =====\n")
+    sys.stdout.flush()
+
 
 def _record_line(path, data):
     digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=")
