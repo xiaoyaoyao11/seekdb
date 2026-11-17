@@ -94,11 +94,19 @@ def compile_branch():
              "libboost-atomic-dev libboost-regex-dev libboost-date-time-dev "
              "libtbb-dev libevent-dev zlib1g-dev perl"], out)
 
-        # The project's own dependency init.
-        run(["bash", "-c", "bash deps/init/dep_create.sh"], out)
-        # The project's own build.
-        run(["bash", "-c", "bash build.sh release --init"], out)
-        run(["bash", "-c", "cd build_release && make -j4 seekdb"], out)
+        # The project's own dependency init, exactly like the judge's compile.sh.
+        run(["bash", "-c",
+             "set -euo pipefail\n"
+             "export GITHUB_WORKSPACE=\"$PWD\"\n"
+             "export PATH=\"$PWD/deps/3rd/usr/local/oceanbase/devtools/bin:$PATH\"\n"
+             "bash build.sh init"], out)
+        # The project's own build, exactly like the judge's compile.sh.
+        run(["bash", "-c",
+             "set -euo pipefail\n"
+             "export GITHUB_WORKSPACE=\"$PWD\"\n"
+             "export PATH=\"$PWD/deps/3rd/usr/local/oceanbase/devtools/bin:$PATH\"\n"
+             "bash build.sh release -DOB_USE_CCACHE=ON -DNEED_PARSER_CACHE=OFF"], out)
+        run(["bash", "-c", "cd build_release && make -j8 seekdb"], out)
 
 
 def _record_line(path, data):
