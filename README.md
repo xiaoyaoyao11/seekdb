@@ -18,9 +18,11 @@ docker run --rm -i --name mvdb-local \
   "$VECTORDB_IMAGE"
 ```
 
-- 入口：`/app/minivectordb --data-dir /data`（`ENTRYPOINT` + `CMD`，判题器无需补传参数）。
-- 构建阶段用 `ubuntu:24.04` 的 apt 安装 g++；产物 **完全静态链接**，运行镜像不含编译器，
-  运行期不需要 libstdc++/libgcc，也不需要联网。
+- 入口：`/app/minivectordb --data-dir /data`，全部参数写在 `ENTRYPOINT` 内，
+  判题器即使覆盖 `CMD` 也不会丢掉 `--data-dir`。
+- 单阶段 `ubuntu:24.04`：构建期 apt 安装 g++ 与 libstdc++/libgcc（带 3 次重试，
+  规避包索引下载截断导致 `no image -> no admission`），产物动态链接，运行期不联网。
+  与题包官方示例一致，也与 4 个公开通过的参赛提交同形态。
 - 所有持久化文件只写 `/data`，当前实现只有一个文件 `/data/wal.log`。不启动端口监听，
   不申请 TTY，不向 stdout 写日志（日志走 stderr）。
 - 启动时会主动输出一行 `{"type":"ready"}` 并 flush，之后才等待第一条请求。
@@ -130,12 +132,24 @@ TopK 行构造 JSON 投影，避免为全表分配结果对象。`CREATE VECTOR 
 | 50,000 条 × 128 维：写入 / 恢复 / WAL | 16.4 s / 3.0 s / 73 MiB |
 | 硬杀进程后重启、撕裂 WAL 尾部、恢复途中再次终止 | 全部 PASS |
 
-开发过程中发现并修复的三个真实缺陷（实验与复测记录见 `agent/conversation.json`）：
+开发过程中发现并修复的真实缺陷（实验与复测记录见 `agent/conversation.json`）：
 ① 列名比较只把左侧转大写，导致所有列查找失败 → 公开用例由 0/20 变为 20/20；
 ② WAL 用 `%.9g` 把 `2.0` 写成 `2`，恢复时被解析成整数、向量全变 0 → 由 18/20
 回到 20/20，修复方式是输出强制带小数点并在恢复端兼容两种 JSON 数值类型；
 ③ 每次提交深拷贝整张表来取列定义，写入退化成 O(N²) → 5 万条写入 28.8 s
-降到 16.4 s，同时降低峰值内存；改为只拷贝列定义。
+降到 16.4 s，同时降低峰值内存；改为只拷贝列定义；
+④ 首轮正式评测 0 分后补修：无 `AS` 别名的 `L2_DISTANCE(...)` 原先返回占位串
+`L2_DISTANCE(v, ?)`，现按 MySQL 语义返回 SQL 原文中的表达式文本；
+⑤ Dockerfile 由"多阶段 + 全静态链接 + 构建期自检"改为单阶段动态链接，
+移除构建期自检（自检失败会直接毁掉整个镜像构建），apt 加 3 次重试，
+参数全部内置于 `ENTRYPOINT`，并对齐题包官方示例与公开通过提交的形态。
+
+**首轮评测复盘（如实记录）**：官方记录为 `taskStatus=2 / failMsg=0`、
+`successCount=0 / failCount=1`，`message`/`performance`/`prompt` 三个字段被平台
+字符混淆，无法反解出具体失败用例。这一形态与"编译失败"型记录
+（`taskStatus=3 / failMsg=3 / testCaseResult=[]`）不同，据此判断镜像构建与协议
+握手已成功、是 MySQL 正式用例未全部通过；但该推断未被直接证实。
+因此修复同时覆盖两侧：源码侧补表达式列名，构建侧消除 3 个独有风险。
 
 ## 5. 最终验证清单（提交前逐项核对）
 

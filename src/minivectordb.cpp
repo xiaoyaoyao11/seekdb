@@ -477,6 +477,7 @@ static std::string ops_to_json(const std::vector<Op> &ops,
 struct Tok {
   int t = 0;  // 0 ident, 1 number, 2 string, 3 punct, 4 end
   std::string v;
+  size_t a = 0, b = 0;  // half-open span in the original SQL text
 };
 
 static std::vector<Tok> lex(const std::string &sql) {
@@ -491,7 +492,7 @@ static std::vector<Tok> lex(const std::string &sql) {
         unsigned char d = static_cast<unsigned char>(sql[p]);
         if (std::isalnum(d) || d == '_' || d == '$') ++p; else break;
       }
-      out.push_back({0, sql.substr(a, p - a)});
+      out.push_back({0, sql.substr(a, p - a), a, p});
       continue;
     }
     if (std::isdigit(c)) {
@@ -508,10 +509,11 @@ static std::vector<Tok> lex(const std::string &sql) {
           while (p < sql.size() && std::isdigit(static_cast<unsigned char>(sql[p]))) ++p;
         } else p = save;
       }
-      out.push_back({1, sql.substr(a, p - a)});
+      out.push_back({1, sql.substr(a, p - a), a, p});
       continue;
     }
     if (c == '\'') {
+      size_t q0 = p;
       ++p;
       std::string s;
       while (p < sql.size()) {
@@ -525,13 +527,14 @@ static std::vector<Tok> lex(const std::string &sql) {
           p += 2;
         } else s += sql[p++];
       }
-      out.push_back({2, s});
+      out.push_back({2, s, q0, p});
       continue;
     }
     if (c == '`' ) {
+      size_t q1 = p;
       ++p; size_t a = p;
       while (p < sql.size() && sql[p] != '`') ++p;
-      out.push_back({0, sql.substr(a, p - a)});
+      out.push_back({0, sql.substr(a, p - a), q1, p});
       if (p < sql.size()) ++p;
       continue;
     }
@@ -539,14 +542,14 @@ static std::vector<Tok> lex(const std::string &sql) {
                                (sql[p] == '>' && sql[p + 1] == '=') ||
                                (sql[p] == '!' && sql[p + 1] == '=') ||
                                (sql[p] == '<' && sql[p + 1] == '>'))) {
-      out.push_back({3, sql.substr(p, 2)});
+      out.push_back({3, sql.substr(p, 2), p, p + 2});
       p += 2;
       continue;
     }
-    out.push_back({3, std::string(1, static_cast<char>(c))});
+    out.push_back({3, std::string(1, static_cast<char>(c)), p, p + 1});
     ++p;
   }
-  out.push_back({4, ""});
+  out.push_back({4, "", sql.size(), sql.size()});
   return out;
 }
 
@@ -555,7 +558,15 @@ static std::vector<Tok> lex(const std::string &sql) {
 struct SqlParser {
   std::vector<Tok> t;
   size_t p = 0;
-  explicit SqlParser(const std::string &sql) : t(lex(sql)) {}
+  const std::string &src;
+  explicit SqlParser(const std::string &sql) : t(lex(sql)), src(sql) {}
+  // Verbatim source text spanning [from, to) in token indices.
+  std::string slice(size_t from, size_t to) const {
+    if (from >= t.size() || to > t.size() || to <= from) return "";
+    const size_t a = t[from].a, b = t[to - 1].b;
+    if (b > src.size() || a > b) return "";
+    return src.substr(a, b - a);
+  }
   const Tok &cur() const { return t[p]; }
   bool at_end() const { return cur().t == 4; }
   bool kw(const char *k) const { return cur().t == 0 && ieq(cur().v, k); }
@@ -1101,13 +1112,16 @@ private:
       do {
         SelectItem it;
         if (ps.eat_kw("L2_DISTANCE")) {
+          const size_t expr_start = ps.p - 1;  // index of the L2_DISTANCE token
           ps.expect_punct("(");
           it.raw_name = ps.ident();
           ps.expect_punct(",");
           it.query = parse_vector_literal(ps, 0);
           ps.expect_punct(")");
+          const size_t expr_end = ps.p;       // one past the closing ')'
           it.kind = 1;
-          it.label = "L2_DISTANCE(" + it.raw_name + ", ?)";
+          // MySQL reports the verbatim expression text when no alias is given.
+          it.label = ps.slice(expr_start, expr_end);
           if (ps.eat_kw("AS")) it.label = ps.ident();
           items.push_back(std::move(it));
           continue;

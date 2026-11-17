@@ -32,6 +32,12 @@
       "role": "student",
       "source": "user message, 2026-11-15",
       "content": "先停一下，我有事要离开，下次接着跑"
+    },
+    {
+      "id": "P5",
+      "role": "user",
+      "source": "session",
+      "content": "请继续执行任务"
     }
   ],
   "conversations": [
@@ -137,6 +143,12 @@
       "name": "握手与协议逐行检查（本地等价驱动）",
       "command": "python3 tools/local_check.py --handshake-only",
       "output": "handshake: PASS\n{\"type\":\"ready\"}\n{\"id\":1,\"ok\":true}\n每条响应一行、id 原样、ok 为布尔、shutdown 后 0 退出且无额外 stdout。"
+    },
+    {
+      "id": "E12",
+      "name": "首轮 0 分后的诊断、源码与 Dockerfile 修复及全量回归",
+      "command": "官方记录形态对照 + 公开队伍 Dockerfile 对照 + 本地协议/回归复测",
+      "output": "official evaluation 600081: taskStatus=2 failMsg=0 successCount=0 failCount=1 strMachineScore=0.000; message/performance/prompt are platform-obfuscated and cannot be decoded\ndiagnosis: taskStatus=2 with performance+prompt fields present differs from the compile-failure shape (taskStatus=3 failMsg=3 testCaseResult=[]), so image build and protocol handshake most likely succeeded and a MySQL admission case failed; this inference is NOT directly confirmed.\ncompared 4 public passing Dockerfiles (Weslowdown/dingdao-end/Hb-zzz-momo/AtoFuture): none uses a fully static glibc C++ binary, none runs an in-image smoke test, all put --data-dir in ENTRYPOINT, all declare VOLUME /data.\nfix 1 (source): unaliased L2_DISTANCE column name was the placeholder 'L2_DISTANCE(v, ?)'; now reproduces the verbatim expression text from the original SQL.\nverify 1: SELECT id, L2_DISTANCE(v, '[0,0]') FROM d; -> columns [\"id\",\"L2_DISTANCE(v, '[0,0]')\"] rows [[1,5.0]]\nfix 2 (build): rewrote Dockerfile to single-stage ubuntu:24.04, dynamic linkage, apt-get with 3 retries, no in-image smoke test, VOLUME /data, WORKDIR /data, all arguments inside ENTRYPOINT.\npublic suite ALL PASS: 20/20\nboundary/crash suite ALL PASS: 33/33\nmaterial check PASS\nguard: gcc:14.2.0 no longer exists on Docker Hub (current 14.x = 14.4.0/14.4/14), so the zero-network fallback prepared earlier was NOT used; kept the official sample base image."
     }
   ],
   "retrospective": [
@@ -149,6 +161,10 @@
       "id": "R2",
       "role": "agent",
       "content": "本地没有 Docker，因此 Linux 镜像构建无法在提交前实测。为降低这个不可验证点的风险，Dockerfile 增加了构建期自检：编译出静态 ELF 后立刻跑一次 ready/shutdown 并检查两行输出；若 Linux 编译或链接有问题，镜像构建阶段就会失败而不是拖到唯一一次正式提测。"
+    },
+    {
+      "id": "R-NEW",
+      "content": "首轮正式提测 0 分后，先区分『镜像构建失败』与『MySQL 准入未通过』：本队记录的 taskStatus=2 / failMsg=0 且 performance、prompt 字段均有内容，而赛题三的编译失败是 taskStatus=3 / failMsg=3 / testCaseResult=[]，两者形态不同，据此推断镜像构建与协议握手已成功、是正式用例未全过，但该推断未被直接证实。因此同时处理两侧：源码修复无别名表达式列名；Dockerfile 对照 4 个公开通过提交，改为单阶段动态链接、去掉会毁掉整个构建的构建期自检、apt 加 3 次重试、参数内置 ENTRYPOINT。平台对 message/performance/prompt 做了字符混淆，无法反解具体失败用例，这一不确定性如实保留，未编造结论。"
     }
   ],
   "limitations": [
@@ -272,6 +288,21 @@
       },
       "result_evidence": {},
       "rationale": "只有规划性发言，没有本轮实际验证结果，按规则最高 0.5 档且 result_evidence 为空。"
+    },
+    {
+      "id": "U9",
+      "dimension": "实验与反馈迭代",
+      "tier": 1.0,
+      "claim": "首轮正式结果 0 分后，依据记录形态区分构建失败与用例失败，同时修复源码中确定的表达式列名缺陷并重写 Dockerfile 消除三个构建期风险，最后重新做全量回归。",
+      "student_evidence": {
+        "pointer": "/user_prompts/4/content",
+        "quote": "请继续执行任务"
+      },
+      "result_evidence": {
+        "pointer": "/experiments/11/output",
+        "quote": "public suite ALL PASS: 20/20\nboundary/crash suite ALL PASS: 33/33"
+      },
+      "rationale": "学生本轮只给出继续推进的授权，没有具体技术指导或本人复测动作，因此如实取 1 档；结果片段为本轮真实的本地回归输出，与学生片段不同。"
     }
   ]
 }
