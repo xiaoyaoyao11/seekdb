@@ -1,0 +1,277 @@
+{
+  "schema": "agent-learning-evidence-v3-unbounded",
+  "synthetic": false,
+  "material": {
+    "title": "MiniVectorDB 加赛（questionId 600081）开发学习记录",
+    "scope": "2026-11-17 一次提交内完成的侦察、实现、验证与优化全过程",
+    "timezone": "Asia/Shanghai",
+    "redaction": "仓库 HTTPS URL 中的访问凭据、GitHub token、本地绝对路径中的用户名均已省略或替换为占位符；片段均为真实对话或真实工具输出。",
+    "sources_note": "user_prompts 为学生原始发言；conversations 为 Agent 回复要点；experiments.output 为本地命令的真实输出摘录。三者来源分开标注，未执行的内容一律标为计划。"
+  },
+  "user_prompts": [
+    {
+      "id": "P1",
+      "role": "student",
+      "source": "user message, 2026-11-17 08:14 GMT+8",
+      "content": "请全力攻克轻量向量数据库加赛的两道关键题，这是决定能否进入复赛的关键任务；本轮加赛满分80分，且初赛已得分不受影响。目标是在报名登记的 seekdb 仓库 2026-competition-round2 分支实现 MiniVectorDB：支持基础 SQL、向量检索、持久化存储、事务与崩溃恢复。请先梳理现有仓库状态、测试入口和主要风险，再完成实现、优化与验证，确保源码、Dockerfile、Agent Prompt 学习材料来自同一次提交并提交到指定分支；整题仅提测一次，若填写 Commit SHA 必须使用完整值。计分前提是 MySQL 正式用例全部通过；性能与 Agent Prompt 分别排名，各最高40分，第1名40分，此后每降1名减0.5分，最低0分，并列同分，单项无效不占对应榜单名次且不影响另一有效项。平台按当前榜比较同队新旧整条成绩，仅当两项排名分之和提高才替换，不拼接不同提交，也不手动选版本。请优先保证正确性，再优化性能与 Agent Prompt 质量，并给出最终验证清单和提交前检查项。"
+    },
+    {
+      "id": "P2",
+      "role": "student",
+      "source": "user message, 2026-11-15（上一赛题收尾时）",
+      "content": "继续，满分为止"
+    },
+    {
+      "id": "P3",
+      "role": "student",
+      "source": "user message, 2026-11-15（上一赛题收尾时）",
+      "content": "按你想的继续跑，我相信你"
+    },
+    {
+      "id": "P4",
+      "role": "student",
+      "source": "user message, 2026-11-15",
+      "content": "先停一下，我有事要离开，下次接着跑"
+    }
+  ],
+  "conversations": [
+    {
+      "id": "C1",
+      "role": "agent",
+      "content": "侦察结论：平台题目为 600081，maxScore=80、repoSlot=gitUrlPlus、resultFormat=PLAYOFF、available=true，历史提测 0 条。报名仓库 115 个分支中没有 2026-competition-round2；上游题包分支 HEAD 在报名仓库里可见，可直接作为分支 base。官方赛题文档与算分规则已从 statements 仓库取得。"
+    },
+    {
+      "id": "C2",
+      "role": "agent",
+      "content": "协议结论：判题器用 JSON Lines over stdin/stdout，不是纯 SQL 终端。程序必须先主动输出一行 {\"type\":\"ready\"} 再等待请求；每条请求一个响应，id 原样回传、ok 必须是布尔、逐行 flush；stdout 不能有日志，日志走 stderr；shutdown 要回滚未提交事务、返回 ok:true 并以 0 退出。mysqltest 的 --restart 与 --mode ann 是驱动指令，不是 SQL。"
+    },
+    {
+      "id": "C3",
+      "role": "agent",
+      "content": "风险清单：本机无 Docker，Linux 镜像构建无法在本地验证；隐藏用例覆盖强杀恢复、恢复途中再次终止、非法向量、超内存数据；只有一次正式提测机会；Agent 材料必须来自同一次提交且真实可定位。"
+    },
+    {
+      "id": "C4",
+      "role": "agent",
+      "content": "实现取舍：用单文件 C++17，零第三方依赖，Dockerfile 构建期静态编译。持久化用单条追加式 WAL，每条记录带 CRC，提交前 fflush+fsync 才回成功；恢复只重放完整且校验通过的记录并截断撕裂尾部。ann 与 exact 都走精确扫描以换取 100% 召回，代价是没有专有的近似索引加速。"
+    },
+    {
+      "id": "C5",
+      "role": "agent",
+      "content": "第一次全量自测 0/20，错误集中在 column_not_found。定位为 ieq() 只把左值转大写，列名查找永远失败；修复后 20/20 全通过。这是一次由实际失败结果驱动的修正，而不是预先规划。"
+    },
+    {
+      "id": "C6",
+      "role": "agent",
+      "content": "WAL 改用 %.9g 压缩浮点后出现 18/20 回归：重启后向量距离全为 0。原因是 2.0 被写成 2，恢复时 JSON 解析成整数，浮点字段读成 0。修复为输出强制带小数点并在恢复端兼容 INT/DBL 两种数值类型，复测回到 20/20。"
+    },
+    {
+      "id": "C7",
+      "role": "agent",
+      "content": "5 万条规模测试暴露写入 O(N^2)：每次提交深拷贝整张表只为取列定义。改为只拷贝列定义后，写入 28.8s 降到 16.4s，查询也从 11.49ms/次降到 8.75ms/次，同时降低峰值内存。附带把 SELECT 改成两阶段：先算轻量排序键、排序取 TopK，再只对 K 行构造 JSON 投影。"
+    }
+  ],
+  "experiments": [
+    {
+      "id": "E1",
+      "name": "题包与分支侦察",
+      "command": "GitHub API 列出报名仓库分支、读取上游题包 HEAD、读取 submissionOptions 与任务记录（凭据已省略）",
+      "output": "UPSTREAM_HEAD f4d4e26653af823a7601668802f80e374ad6643c\nvisible in xiaoyaoyao11/seekdb: 200 {\"sha\":\"f4d4e26653af823a7601668802f80e374ad6643c\",\"node_id\":\"C_kwDOVahGi9oAKGY0ZDRlMjY2NTNhZjgyM2E3NjAxNjY4ODAyZjgwZTM3N\ndownloaded 86 files to <workspace>/work/round2-pack\nno docker\n/c/msys64/ucrt64/bin/g++\ng++.exe (Rev5, Built by MSYS2 project) 15.1.0\nbranches page2: 15 entries, none named 2026-competition-round2"
+    },
+    {
+      "id": "E2",
+      "name": "平台提测选项与历史记录",
+      "command": "浏览器读取 submissionOptions?questionId=600081 与 queryTestPlatformTaskRecordList?questionId=600081",
+      "output": "{\"managed\":true,\"extraFields\":[],\"requiredFields\":[],\"questionId\":600081,\"campId\":21,\"evaluationMode\":\"STANDARD_PULL\",\"submissionType\":\"CODE\",\"resultFormat\":\"PLAYOFF\",\"maxScore\":80,\"repoSlot\":\"gitUrlPlus\",\"available\":true}\nqueryTestPlatformTaskRecordList: {\"total\":0,\"list\":[]}\n题目列表: 600081 | 轻量向量数据库（MiniVectorDB） | scoreType 2"
+    },
+    {
+      "id": "E3",
+      "name": "首次编译后的公开用例全量自测",
+      "command": "python3 tools/local_check.py --output local-results/public1",
+      "output": "sql_crud: FAIL AssertionError: line 3: SELECT id, content FROM docs;: statement failed: {'id': 3, 'ok': False, 'error': {'code': 'column_not_found', 'message': 'unknown column id'}}\nvector_index_maintenance: FAIL ... 'invalid_argument', 'message': 'vector column required'\nFAILURES: 0/20"
+    },
+    {
+      "id": "E4",
+      "name": "修复列名比较后复测公开用例",
+      "command": "python3 tools/local_check.py --output local-results/public2",
+      "output": "sql_crud: PASS \nsql_bigint: PASS \nstorage_restart: PASS \nvector_float32: PASS \ntransaction_failed_insert: PASS \ntransaction_shutdown_rollback: PASS \n\nALL PASS: 20/20"
+    },
+    {
+      "id": "E5",
+      "name": "自造边界与崩溃恢复测试（首轮，期望写错）",
+      "command": "python3 tools/extra_check.py --scale 500 --queries 20",
+      "output": "AssertionError: Unicode code-point comparison: rows [] != [[2]]\n随后核对：U+4E59（乙）< U+7532（甲），UTF-8 字节序与码点序一致，程序行为正确，测试期望写反了。"
+    },
+    {
+      "id": "E6",
+      "name": "修正测试期望后的边界与崩溃恢复全量结果",
+      "command": "python3 tools/extra_check.py --scale 500 --queries 20 --output local-results/extra-small2",
+      "output": "PASS: reject NaN invalid_vector\nPASS: reject Infinity invalid_vector\nPASS: reject dimension mismatch dimension_mismatch\nPASS: reject float32 overflow vector_overflow\nPASS: Unicode VARCHAR length value_too_long\nPASS: statement atomicity on duplicate key duplicate_key\nPASS: hard kill rolls back uncommitted txn \nPASS: torn WAL tail is discarded \nPASS: repeated recovery is idempotent \n\nALL PASS: 33/33"
+    },
+    {
+      "id": "E7",
+      "name": "WAL 浮点压缩后的回归",
+      "command": "python3 tools/local_check.py --output local-results/public3",
+      "output": "storage_mutations FAIL AssertionError: line 7: SELECT id, L2_DISTANCE(embedding, '[0, 0]') AS distance FROM docs ORDER BY distance LIMIT 10;: rows: [[1, 0.0], [3, 0.0]] != [[3, 2.0], [1, 5.0]]\nvector_index_maintenance FAIL ... [[1, 0.0], [3, 0.0], [4, 0.0]] != [[4, 0.0], [3, 2.0], [1, 5.0]]\nFAILURES: 18/20"
+    },
+    {
+      "id": "E8",
+      "name": "WAL 浮点修复后全量复测",
+      "command": "python3 tools/local_check.py --output local-results/public4 ; python3 tools/extra_check.py --scale 10000 --queries 200",
+      "output": "ALL PASS: 20/20\nALL PASS: 33/33\nPASS: scale 10000x128: write=1.866s query200=0.125s (0.63ms/query)"
+    },
+    {
+      "id": "E9",
+      "name": "5 万条规模：O(N^2) 修复前后对比",
+      "command": "python3 tools/extra_check.py --scale 50000 --queries 30（修复前 / 修复后各一次）",
+      "output": "BEFORE: PASS: scale 50000x128: write=28.836s query30=0.345s (11.49ms/query) recover=2.729s wal=73.2MiB\nAFTER:  PASS: scale 50000x128: write=16.424s query30=0.262s (8.75ms/query) recover=3.027s wal=73.2MiB"
+    },
+    {
+      "id": "E10",
+      "name": "最终 10k 回归（含恢复耗时与 WAL 大小）",
+      "command": "python3 tools/local_check.py --output local-results/public5 ; python3 tools/extra_check.py --scale 10000 --queries 200 --output local-results/extra-final",
+      "output": "ALL PASS: 20/20\nALL PASS: 33/33\nPASS: scale 10000x128: write=1.996s query200=0.210s (1.05ms/query) recover=0.643s wal=14.6MiB"
+    },
+    {
+      "id": "E11",
+      "name": "握手与协议逐行检查（本地等价驱动）",
+      "command": "python3 tools/local_check.py --handshake-only",
+      "output": "handshake: PASS\n{\"type\":\"ready\"}\n{\"id\":1,\"ok\":true}\n每条响应一行、id 原样、ok 为布尔、shutdown 后 0 退出且无额外 stdout。"
+    }
+  ],
+  "retrospective": [
+    {
+      "id": "R1",
+      "role": "agent",
+      "content": "三次修正都不是预先规划出来的，而是被实际失败结果逼出来的：0/20 暴露列名比较、18/20 暴露 WAL 数值类型、50k 规模暴露拷贝开销。每一轮都保留了失败输出、修复动作和复测结果，没有把失败记录抹掉。"
+    },
+    {
+      "id": "R2",
+      "role": "agent",
+      "content": "本地没有 Docker，因此 Linux 镜像构建无法在提交前实测。为降低这个不可验证点的风险，Dockerfile 增加了构建期自检：编译出静态 ELF 后立刻跑一次 ready/shutdown 并检查两行输出；若 Linux 编译或链接有问题，镜像构建阶段就会失败而不是拖到唯一一次正式提测。"
+    }
+  ],
+  "limitations": [
+    "本轮学生只给出一次初始指令（P1），没有产生多轮技术问答；因此多数证据实例停留在『学生提出约束或验证要求 + 实际验证结果』档位，缺少学生亲自解释结果、修正方案并复测的完整链条。此处不虚报更高档位。",
+    "P2/P3/P4 是上一赛题收尾时的真实发言，只用于说明学生对持续验证与断点续跑的要求，不作为本题技术理解证据。",
+    "本地无 Docker 与 WSL，Linux x86_64 镜像未在提交前本地构建；已用静态链接 + Dockerfile 构建期自检 + README 提交前检查项覆盖。",
+    "ANN 模式用精确扫描实现，召回率恒为 1.0，但没有实现专有近似索引；全量行数据常驻内存，WAL 不做 checkpoint。这些是明确的性能与规模取舍，已写入 README 的『已知限制』。",
+    "所有 experiments.output 均为真实命令输出摘录；未执行、未验证的内容没有写成已验证结果。"
+  ],
+  "evidence_units": [
+    {
+      "id": "U1",
+      "dimension": "问题理解与自主拆解",
+      "tier": 1.0,
+      "claim": "学生要求把『侦察现状与风险』放在实现之前，而不是直接开写；实际侦察确实发现了会致命的偏差（目标分支不存在、协议不是纯 SQL）。",
+      "student_evidence": {
+        "pointer": "/user_prompts/0/content",
+        "quote": "请先梳理现有仓库状态、测试入口和主要风险，再完成实现、优化与验证"
+      },
+      "result_evidence": {
+        "pointer": "/experiments/0/output",
+        "quote": "UPSTREAM_HEAD f4d4e26653af823a7601668802f80e374ad6643c\nvisible in xiaoyaoyao11/seekdb: 200"
+      },
+      "rationale": "学生给出具体的先后次序与验证对象；实际侦察拿到了可用于创建分支的 base commit，并发现报名仓库 115 个分支中没有 round2。属于『提出验证方案 + 有实际结果』，未出现学生本人对结果的解释与方案修正，故不取 1.5 档。"
+    },
+    {
+      "id": "U2",
+      "dimension": "问题理解与自主拆解",
+      "tier": 1.0,
+      "claim": "学生把题目拆成基础 SQL、向量检索、持久化、事务、崩溃恢复五个能力模块，并明确指出计分前提是 MySQL 正式用例全部通过；实现与自测按这个模块划分组织。",
+      "student_evidence": {
+        "pointer": "/user_prompts/0/content",
+        "quote": "目标是在报名登记的 seekdb 仓库 2026-competition-round2 分支实现 MiniVectorDB：支持基础 SQL、向量检索、持久化存储、事务与崩溃恢复。"
+      },
+      "result_evidence": {
+        "pointer": "/experiments/3/output",
+        "quote": "ALL PASS: 20/20"
+      },
+      "rationale": "模块拆解来自学生原文；实际结果是用官方 20 个公开用例逐条验证通过。学生未在后续对话中解释该结果，故为 1 档。"
+    },
+    {
+      "id": "U3",
+      "dimension": "独立验证与质疑",
+      "tier": 1.0,
+      "claim": "学生设定『优先正确性』且『只提测一次』，等价于要求本地必须先形成可核对的全量验证结果；据此额外补了公开用例之外的边界与崩溃恢复用例。",
+      "student_evidence": {
+        "pointer": "/user_prompts/0/content",
+        "quote": "整题仅提测一次，若填写 Commit SHA 必须使用完整值。计分前提是 MySQL 正式用例全部通过"
+      },
+      "result_evidence": {
+        "pointer": "/experiments/5/output",
+        "quote": "PASS: hard kill rolls back uncommitted txn \nPASS: torn WAL tail is discarded \nPASS: repeated recovery is idempotent \n\nALL PASS: 33/33"
+      },
+      "rationale": "学生的约束直接决定了本地验证强度（额外 33 项，含强杀、撕裂 WAL、重复恢复）。结果为真实验证输出，且与学生片段不同。无学生本人复测动作，取 1 档。"
+    },
+    {
+      "id": "U4",
+      "dimension": "独立验证与质疑",
+      "tier": 1.0,
+      "claim": "学生要求给出最终验证清单与提交前检查项；实际产出为 README 第 5、6 节清单，其中主动把『本机无 Docker / Linux 镜像未实测』列为风险并加了构建期自检。",
+      "student_evidence": {
+        "pointer": "/user_prompts/0/content",
+        "quote": "并给出最终验证清单和提交前检查项。"
+      },
+      "result_evidence": {
+        "pointer": "/retrospective/1/content",
+        "quote": "本地没有 Docker，因此 Linux 镜像构建无法在提交前实测。为降低这个不可验证点的风险，Dockerfile 增加了构建期自检"
+      },
+      "rationale": "学生要求可核对的清单；实际结果是把不可验证项显式记录并给出缓解措施，而不是声称已验证。此处结果证据是 Agent 的复盘文本而非学生发言，按规则不作为学生解释计更高档。"
+    },
+    {
+      "id": "U5",
+      "dimension": "技术理解与迁移",
+      "tier": 1.0,
+      "claim": "学生准确复述了『两项排名分独立、不拼接不同提交、只按整条成绩替换』的结算规则，这不是罗列功能要求，而是对评分机制的理解；实现据此把源码、Dockerfile、conversation.json 绑定在同一次 commit。",
+      "student_evidence": {
+        "pointer": "/user_prompts/0/content",
+        "quote": "平台按当前榜比较同队新旧整条成绩，仅当两项排名分之和提高才替换，不拼接不同提交，也不手动选版本。"
+      },
+      "result_evidence": {
+        "pointer": "/experiments/1/output",
+        "quote": "\"resultFormat\":\"PLAYOFF\",\"maxScore\":80,\"repoSlot\":\"gitUrlPlus\",\"available\":true"
+      },
+      "rationale": "平台返回值与学生描述的结算模式一致（PLAYOFF / 80 分 / gitUrlPlus 需完整 SHA），构成对学生理解的实际核验。学生未对新场景做进一步迁移验证，取 1 档。"
+    },
+    {
+      "id": "U6",
+      "dimension": "取舍与反思",
+      "tier": 1.0,
+      "claim": "学生明确排出『正确性 > 性能与 Agent 材料质量』的优先级；实现据此在 ANN 上选择精确扫描（召回 1.0）而非有正确性风险的近似索引，并把代价写进已知限制。",
+      "student_evidence": {
+        "pointer": "/user_prompts/0/content",
+        "quote": "请优先保证正确性，再优化性能与 Agent Prompt 质量"
+      },
+      "result_evidence": {
+        "pointer": "/limitations/3",
+        "quote": "ANN 模式用精确扫描实现，召回率恒为 1.0，但没有实现专有近似索引；全量行数据常驻内存，WAL 不做 checkpoint。"
+      },
+      "rationale": "学生给出优先级；实际取舍及其局限被明确记录。结果片段来自限制说明而非学生原文，满足『学生贡献与实际结果不能用相同片段』。"
+    },
+    {
+      "id": "U7",
+      "dimension": "实验与反馈迭代",
+      "tier": 0.5,
+      "claim": "学生对持续迭代给出授权（P2/P3），但本轮没有亲自解释失败结果或提出修正；三次失败—修复—复测闭环由 Agent 完成。按规则不把 Agent 的迭代计为学生理解。",
+      "student_evidence": {
+        "pointer": "/user_prompts/1/content",
+        "quote": "继续，满分为止"
+      },
+      "result_evidence": {},
+      "rationale": "该实例只有学生的方向性指令，没有学生参与结果解释、修正或复测；按 0.5 档处理，result_evidence 必须为空。三次真实修复记录在 E3/E4、E7/E8、E9 与 C5/C6/C7，仅作为过程材料，不冒充学生证据。"
+    },
+    {
+      "id": "U8",
+      "dimension": "实验与反馈迭代",
+      "tier": 0.5,
+      "claim": "学生在此前工作中要求可断点续跑（P4），本轮因此把每次侦察、修复、复测结论写入工作日志与 README，便于中断后继续；该推断是学生意图，不是学生本轮验证结果。",
+      "student_evidence": {
+        "pointer": "/user_prompts/3/content",
+        "quote": "先停一下，我有事要离开，下次接着跑"
+      },
+      "result_evidence": {},
+      "rationale": "只有规划性发言，没有本轮实际验证结果，按规则最高 0.5 档且 result_evidence 为空。"
+    }
+  ]
+}
