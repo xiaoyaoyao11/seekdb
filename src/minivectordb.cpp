@@ -27,6 +27,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -354,6 +355,7 @@ struct Cell {
   long long i = 0;
   std::string s;
   std::vector<float> v;
+  bool is_null = false;   // SQL NULL; the other members are meaningless then
 };
 using Row = std::vector<Cell>;
 
@@ -394,6 +396,7 @@ struct ViewRow {
 // WAL serialisation helpers -------------------------------------------------
 
 static JV cell_to_json(const Cell &c, int type) {
+  if (c.is_null) return JV::nullv();
   if (type == T_BIGINT) return JV::intv(c.i);
   if (type == T_VARCHAR) return JV::strv(c.s);
   JV a = JV::arrv();
@@ -403,8 +406,11 @@ static JV cell_to_json(const Cell &c, int type) {
 
 // WAL floats are float32 values; 9 significant digits round-trip exactly and
 // keep the log (and therefore the measured disk I/O B) much smaller than %.17g.
+// A null cell is written as the literal null, every other cell keeps its type.
 static void append_cell_wal(std::string &out, const Cell &c, int type) {
-  if (type == T_BIGINT) {
+  if (c.is_null) {
+    out += "null";
+  } else if (type == T_BIGINT) {
     out += std::to_string(c.i);
   } else if (type == T_VARCHAR) {
     append_json_string(out, c.s);
@@ -644,10 +650,41 @@ struct SelectItem {
   std::string label;      // output column name (alias or expression text)
 };
 
-struct Cond {
+// The value of an UPDATE assignment.  It is either a literal or a simple
+// arithmetic expression over the current row, so that "SET n = n + 1" works.
+struct Assign {
   int col = -1;
-  int op = 0;  // 0 =, 1 <, 2 <=, 3 >, 4 >=, 5 !=
+  bool is_literal = true;
+  Cell literal;
+  // kind 0: literal, 1: column, 2: column op literal, 3: literal op column,
+  // 4: column op column
+  int kind = 0;
+  int op = 0;              // 0 +, 1 -, 2 *
+  int left_col = -1;
+  int right_col = -1;
+  JV right_value;
+};
+
+// A boolean expression over the columns of a table.
+//
+// kind 0: comparison of a column with a literal (cmp: 0 =, 1 <, 2 <=, 3 >,
+//          4 >=, 5 !=, 6 IS NULL, 7 IS NOT NULL)
+// kind 1: AND of two expressions
+// kind 2: OR of two expressions
+// kind 3: NOT of one expression
+// kind 4: LIKE, the pattern is stored in `value`
+// kind 5: BETWEEN, the two bounds are stored in `lo` and `hi`
+// kind 6: IN, the candidate list is stored in `items`
+struct Cond {
+  int kind = 0;
+  int col = -1;
+  int cmp = 0;
   JV value;
+  JV lo;
+  JV hi;
+  std::vector<JV> items;
+  std::unique_ptr<Cond> left;
+  std::unique_ptr<Cond> right;
 };
 
 struct OrderSpec {
@@ -834,7 +871,9 @@ private:
         for (size_t i = 0; i < cols.size(); ++i) {
           Cell cell;
           const JV &v = row.arr[i];
-          if (cols[i].type == T_BIGINT) {
+          if (v.type == JV::NUL) {
+            cell.is_null = true;
+          } else if (cols[i].type == T_BIGINT) {
             cell.i = v.type == JV::DBL ? static_cast<long long>(v.d) : v.i;
           } else if (cols[i].type == T_VARCHAR) {
             cell.s = v.s;
@@ -972,6 +1011,12 @@ private:
 
   Cell parse_value_for(const Column &col, SqlParser &ps) {
     Cell cell;
+    // NULL is accepted for every column type.
+    if (ps.cur().t == 0 && ieq(ps.cur().v, "null")) {
+      ++ps.p;
+      cell.is_null = true;
+      return cell;
+    }
     if (col.type == T_BIGINT) {
       bool neg = false;
       if (ps.eat_punct("-")) neg = true;
@@ -987,6 +1032,135 @@ private:
       cell.v = parse_vector_literal(ps, col.len);
     }
     return cell;
+  }
+
+  // Parse the right hand side of an UPDATE assignment: a literal, a column or
+  // a simple arithmetic expression over a column and a literal.
+  void parse_assign_value(const Table &t, Assign &a, SqlParser &ps) {
+    const Column &col = t.cols[a.col];
+    // A literal?
+    bool neg = false;
+    if (ps.eat_punct("-")) neg = true;
+    if (ps.cur().t == 1) {
+      long long base = neg ? -parse_i64(ps.cur().v) : parse_i64(ps.cur().v);
+      ++ps.p;
+      // A literal followed by an operator, for example "SET n = 1 + 2".
+      std::string op_text = ps.cur().v;
+      if (ps.eat_punct("+") || ps.eat_punct("-") || ps.eat_punct("*")) {
+        if (ps.cur().t != 1) throw DbError("syntax_error", "value expected");
+        long long rhs = parse_i64(ps.cur().v);
+        ++ps.p;
+        a.kind = 0;
+        a.is_literal = true;
+        a.literal.i = op_text == "+" ? base + rhs
+                                     : (op_text == "-" ? base - rhs : base * rhs);
+        if (col.type == T_VARCHAR) a.literal.s = std::to_string(a.literal.i);
+        return;
+      }
+      a.kind = 0;
+      a.is_literal = true;
+      a.literal.i = base;
+      if (col.type == T_VARCHAR) a.literal.s = std::to_string(a.literal.i);
+      return;
+    }
+    if (ps.cur().t == 2) {
+      if (col.type == T_VECTOR) {
+        // A vector literal, for example "SET embedding = '[3,4]'".
+        a.kind = 0;
+        a.is_literal = true;
+        a.literal = parse_value_for(col, ps);
+        return;
+      }
+      a.kind = 0;
+      a.is_literal = true;
+      a.literal.s = ps.cur().v;
+      ++ps.p;
+      if (col.type == T_BIGINT) {
+        long long v = parse_i64(a.literal.s);
+        a.literal.i = v;
+      }
+      if (col.type == T_VARCHAR &&
+          static_cast<int>(utf8_chars(a.literal.s)) > col.len)
+        throw DbError("value_too_long", "VARCHAR length exceeded");
+      return;
+    }
+    if (ps.cur().t == 0 && ieq(ps.cur().v, "null")) {
+      ++ps.p;
+      a.kind = 0;
+      a.is_literal = true;
+      a.literal.is_null = true;
+      return;
+    }
+    // A column reference?
+    if (ps.cur().t == 0) {
+      std::string name = ps.cur().v;
+      int idx = t.col_index(name);
+      if (idx >= 0) {
+        ++ps.p;
+        // The operator is looked at before the cursor moves past it.
+        std::string op_text = ps.cur().v;
+        bool has_op = ps.eat_punct("+") || ps.eat_punct("-") || ps.eat_punct("*");
+        if (!has_op) {
+          a.kind = 1;
+          a.left_col = idx;
+          return;
+        }
+        a.op = op_text == "+" ? 0 : (op_text == "-" ? 1 : 2);
+        a.kind = 2;
+        a.left_col = idx;
+        // The right hand side is a literal or another column.
+        bool rneg = false;
+        if (ps.eat_punct("-")) rneg = true;
+        if (ps.cur().t == 1) {
+          long long v = parse_i64(ps.cur().v);
+          ++ps.p;
+          a.right_value = JV::intv(rneg ? -v : v);
+          return;
+        }
+        if (ps.cur().t == 0 && t.col_index(ps.cur().v) >= 0) {
+          a.right_col = t.col_index(ps.cur().v);
+          ++ps.p;
+          a.kind = 4;
+          return;
+        }
+        throw DbError("syntax_error", "value expected");
+      }
+    }
+    throw DbError("syntax_error", "value expected");
+  }
+
+  // Evaluate an assignment against the current row.
+  Cell eval_assign(const Table &t, const Assign &a, const Row &r) const {
+    Cell out;
+    if (a.kind == 0) return a.literal;
+    if (a.kind == 1) {
+      out = r[a.left_col];
+      return out;
+    }
+    // An arithmetic expression over a null value is null, as in MySQL.
+    if (r[a.left_col].is_null) {
+      out.is_null = true;
+      return out;
+    }
+    long long left = r[a.left_col].i;
+    long long right = 0;
+    if (a.kind == 4) {
+      if (r[a.right_col].is_null) {
+        out.is_null = true;
+        return out;
+      }
+      right = r[a.right_col].i;
+    } else {
+      right = a.right_value.type == JV::INT ? a.right_value.i : 0;
+    }
+    out.is_null = false;
+    switch (a.op) {
+      case 0: out.i = left + right; break;
+      case 1: out.i = left - right; break;
+      default: out.i = left * right; break;
+    }
+    if (t.cols[a.col].type == T_VARCHAR) out.s = std::to_string(out.i);
+    return out;
   }
 
   static JV cell_json(const Cell &c, int type) { return cell_to_json(c, type); }
@@ -1024,6 +1198,8 @@ private:
         row[idx] = parse_value_for(t->cols[idx], ps);
       }
       ps.expect_punct(")");
+      if (row[t->pk_idx].is_null)
+        throw DbError("not_null_violated", "primary key cannot be NULL");
       long long id = row[t->pk_idx].i;
       if (visible_id(*t, id, pending_ids))
         throw DbError("duplicate_key", "duplicate primary key");
@@ -1053,52 +1229,196 @@ private:
     throw DbError("syntax_error", "comparison operator expected");
   }
 
-  std::vector<Cond> parse_where(SqlParser &ps, const Table &t) {
-    std::vector<Cond> out;
-    if (!ps.eat_kw("WHERE")) return out;
-    do {
-      Cond c;
-      std::string col = ps.ident();
-      c.col = t.col_index(col);
-      if (c.col < 0) throw DbError("column_not_found", "unknown column");
-      c.op = parse_cmp(ps);
-      bool neg = false;
-      if (ps.eat_punct("-")) neg = true;
-      if (ps.cur().t == 2) c.value = JV::strv(ps.cur().v);
-      else if (ps.cur().t == 1) c.value = JV::intv(neg ? -parse_i64(ps.cur().v) : parse_i64(ps.cur().v));
-      else throw DbError("syntax_error", "value expected");
+  // A literal of a WHERE clause: a number, a string or NULL.
+  static JV parse_literal(SqlParser &ps) {
+    bool neg = false;
+    if (ps.eat_punct("-")) neg = true;
+    if (ps.cur().t == 2) { JV v = JV::strv(ps.cur().v); ++ps.p; return v; }
+    if (ps.cur().t == 1) {
+      JV v = JV::intv(neg ? -parse_i64(ps.cur().v) : parse_i64(ps.cur().v));
       ++ps.p;
-      out.push_back(std::move(c));
-    } while (ps.eat_kw("AND"));
-    return out;
+      return v;
+    }
+    if (ps.cur().t == 0 && ieq(ps.cur().v, "null")) { ++ps.p; return JV::nullv(); }
+    throw DbError("syntax_error", "value expected");
   }
 
-  bool matches(const Row &r, const Table &t, const std::vector<Cond> &conds) const {
-    for (const auto &c : conds) {
-      int cmp = 0;
-      if (t.cols[c.col].type == T_BIGINT) {
-        long long a = r[c.col].i;
-        long long b = c.value.type == JV::INT ? c.value.i :
-                      (c.value.type == JV::STR ? parse_i64(c.value.s) : static_cast<long long>(c.value.d));
-        cmp = a < b ? -1 : (a > b ? 1 : 0);
-      } else {
-        std::string a = r[c.col].s;
-        std::string b = c.value.type == JV::STR ? c.value.s :
-                        (c.value.type == JV::INT ? std::to_string(c.value.i) : dump_double(c.value.d));
-        cmp = a < b ? -1 : (a > b ? 1 : 0);
-      }
-      bool pass = false;
-      switch (c.op) {
-        case 0: pass = cmp == 0; break;
-        case 1: pass = cmp < 0; break;
-        case 2: pass = cmp <= 0; break;
-        case 3: pass = cmp > 0; break;
-        case 4: pass = cmp >= 0; break;
-        case 5: pass = cmp != 0; break;
-      }
-      if (!pass) return false;
+  // The grammar of a WHERE clause, with AND binding tighter than OR:
+  //   expr    := or_expr
+  //   or_expr := and_expr (OR and_expr)*
+  //   and_expr:= not_expr (AND not_expr)*
+  //   not_expr:= NOT not_expr | primary
+  //   primary := '(' expr ')' | comparison
+  std::unique_ptr<Cond> parse_where_expr(SqlParser &ps, const Table &t) {
+    std::unique_ptr<Cond> left = parse_and_expr(ps, t);
+    while (ps.eat_kw("OR")) {
+      auto node = std::make_unique<Cond>();
+      node->kind = 2;
+      node->left = std::move(left);
+      node->right = parse_and_expr(ps, t);
+      left = std::move(node);
     }
-    return true;
+    return left;
+  }
+
+  std::unique_ptr<Cond> parse_and_expr(SqlParser &ps, const Table &t) {
+    std::unique_ptr<Cond> left = parse_not_expr(ps, t);
+    while (ps.eat_kw("AND")) {
+      auto node = std::make_unique<Cond>();
+      node->kind = 1;
+      node->left = std::move(left);
+      node->right = parse_not_expr(ps, t);
+      left = std::move(node);
+    }
+    return left;
+  }
+
+  std::unique_ptr<Cond> parse_not_expr(SqlParser &ps, const Table &t) {
+    if (ps.eat_kw("NOT")) {
+      auto node = std::make_unique<Cond>();
+      node->kind = 3;
+      node->left = parse_not_expr(ps, t);
+      return node;
+    }
+    if (ps.eat_punct("(")) {
+      std::unique_ptr<Cond> inner = parse_where_expr(ps, t);
+      ps.expect_punct(")");
+      return inner;
+    }
+    return parse_comparison(ps, t);
+  }
+
+  std::unique_ptr<Cond> parse_comparison(SqlParser &ps, const Table &t) {
+    auto node = std::make_unique<Cond>();
+    node->kind = 0;
+    std::string col = ps.ident();
+    node->col = t.col_index(col);
+    if (node->col < 0) throw DbError("column_not_found", "unknown column");
+    // IS [NOT] NULL
+    if (ps.eat_kw("IS")) {
+      bool negate = ps.eat_kw("NOT");
+      if (!ps.eat_kw("NULL")) throw DbError("syntax_error", "NULL expected");
+      node->cmp = negate ? 7 : 6;
+      return node;
+    }
+    if (ps.eat_kw("LIKE")) {
+      node->kind = 4;
+      node->value = parse_literal(ps);
+      if (node->value.type != JV::STR)
+        throw DbError("syntax_error", "string pattern expected");
+      return node;
+    }
+    if (ps.eat_kw("BETWEEN")) {
+      node->kind = 5;
+      node->lo = parse_literal(ps);
+      if (!ps.eat_kw("AND")) throw DbError("syntax_error", "AND expected");
+      node->hi = parse_literal(ps);
+      return node;
+    }
+    if (ps.eat_kw("IN")) {
+      node->kind = 6;
+      ps.expect_punct("(");
+      if (ps.punct(")")) throw DbError("syntax_error", "empty IN list");
+      do {
+        node->items.push_back(parse_literal(ps));
+      } while (ps.eat_punct(","));
+      ps.expect_punct(")");
+      return node;
+    }
+    node->cmp = parse_cmp(ps);
+    node->value = parse_literal(ps);
+    return node;
+  }
+
+  std::unique_ptr<Cond> parse_where(SqlParser &ps, const Table &t) {
+    if (!ps.eat_kw("WHERE")) return nullptr;
+    return parse_where_expr(ps, t);
+  }
+
+  // MySQL string comparison: the pattern of LIKE uses % and _.
+  static bool like_match(const std::string &s, const std::string &pattern) {
+    // Iterative backtracking matcher, so a pathological pattern cannot blow
+    // the stack.
+    size_t si = 0, pi = 0, star = std::string::npos, mark = 0;
+    while (si < s.size()) {
+      if (pi < pattern.size() && (pattern[pi] == '_' || pattern[pi] == s[si])) {
+        ++si; ++pi;
+      } else if (pi < pattern.size() && pattern[pi] == '%') {
+        star = pi++; mark = si;
+      } else if (star != std::string::npos) {
+        pi = star + 1; si = ++mark;
+      } else {
+        return false;
+      }
+    }
+    while (pi < pattern.size() && pattern[pi] == '%') ++pi;
+    return pi == pattern.size();
+  }
+
+  // Compare a cell with a literal the way MySQL does.  Returns -1, 0 or 1.
+  // A null cell never compares equal to anything.
+  static int compare_cell(const Cell &cell, int type, const JV &value) {
+    if (cell.is_null || value.type == JV::NUL) return value.type == JV::NUL ? 0 : 2;
+    if (type == T_BIGINT) {
+      long long b = value.type == JV::INT ? value.i :
+                    (value.type == JV::STR ? parse_i64(value.s)
+                                           : static_cast<long long>(value.d));
+      return cell.i < b ? -1 : (cell.i > b ? 1 : 0);
+    }
+    std::string b = value.type == JV::STR ? value.s :
+                    (value.type == JV::INT ? std::to_string(value.i)
+                                           : dump_double(value.d));
+    if (cell.s < b) return -1;
+    if (cell.s > b) return 1;
+    return 0;
+  }
+
+  bool eval_cond(const Row &r, const Table &t, const Cond &c) const {
+    switch (c.kind) {
+      case 1:
+        return eval_cond(r, t, *c.left) && eval_cond(r, t, *c.right);
+      case 2:
+        return eval_cond(r, t, *c.left) || eval_cond(r, t, *c.right);
+      case 3:
+        return !eval_cond(r, t, *c.left);
+      case 4: {
+        if (r[c.col].is_null) return false;
+        return like_match(r[c.col].s, c.value.s);
+      }
+      case 5: {
+        int lo = compare_cell(r[c.col], t.cols[c.col].type, c.lo);
+        int hi = compare_cell(r[c.col], t.cols[c.col].type, c.hi);
+        if (lo == 2 || hi == 2) return false;   // null never satisfies BETWEEN
+        return lo >= 0 && hi <= 0;
+      }
+      case 6: {
+        if (r[c.col].is_null) return false;
+        for (const auto &item : c.items) {
+          if (compare_cell(r[c.col], t.cols[c.col].type, item) == 0) return true;
+        }
+        return false;
+      }
+      default: break;
+    }
+    const Cell &cell = r[c.col];
+    if (c.cmp == 6) return cell.is_null;
+    if (c.cmp == 7) return !cell.is_null;
+    // A comparison with null is unknown, and an unknown predicate is false.
+    if (cell.is_null || c.value.type == JV::NUL) return false;
+    int cmp = compare_cell(cell, t.cols[c.col].type, c.value);
+    switch (c.cmp) {
+      case 0: return cmp == 0;
+      case 1: return cmp < 0;
+      case 2: return cmp <= 0;
+      case 3: return cmp > 0;
+      case 4: return cmp >= 0;
+      case 5: return cmp != 0;
+    }
+    return false;
+  }
+
+  bool matches(const Row &r, const Table &t, const std::unique_ptr<Cond> &cond) const {
+    return !cond || eval_cond(r, t, *cond);
   }
 
   // ------------------------------------------------------------- SELECT ----
@@ -1106,6 +1426,7 @@ private:
   Reply exec_select(SqlParser &ps, const std::string &mode) {
     ps.expect_kw("SELECT");
     std::vector<SelectItem> items;
+    const bool distinct = ps.eat_kw("DISTINCT");
     if (ps.eat_punct("*")) {
       SelectItem it; it.kind = 2; items.push_back(it);
     } else {
@@ -1129,7 +1450,12 @@ private:
         it.kind = 0;
         it.raw_name = ps.ident();
         it.label = it.raw_name;
-        if (ps.eat_kw("AS")) it.label = ps.ident();
+        if (ps.eat_kw("AS")) {
+          it.label = ps.ident();
+        } else if (ps.cur().t == 0 && !ps.kw("FROM")) {
+          // An alias without the AS keyword, for example "SELECT c label".
+          it.label = ps.ident();
+        }
         items.push_back(std::move(it));
       } while (ps.eat_punct(","));
     }
@@ -1151,7 +1477,7 @@ private:
           throw DbError("dimension_mismatch", "query vector dimension mismatch");
       }
     }
-    std::vector<Cond> conds = parse_where(ps, *t);
+    std::unique_ptr<Cond> conds = parse_where(ps, *t);
     OrderSpec order;
     if (ps.eat_kw("ORDER")) {
       ps.expect_kw("BY");
@@ -1190,10 +1516,22 @@ private:
       else if (ps.eat_kw("ASC")) order.desc = false;
     }
     long long limit = -1;
+    long long offset = 0;
     if (ps.eat_kw("LIMIT")) {
       if (ps.cur().t != 1) throw DbError("syntax_error", "LIMIT expects integer");
       limit = parse_i64(ps.cur().v); ++ps.p;
       if (limit < 0) throw DbError("invalid_argument", "negative LIMIT");
+      if (ps.eat_kw("OFFSET")) {
+        if (ps.cur().t != 1) throw DbError("syntax_error", "OFFSET expects integer");
+        offset = parse_i64(ps.cur().v); ++ps.p;
+        if (offset < 0) throw DbError("invalid_argument", "negative OFFSET");
+      }
+    } else if (ps.eat_kw("OFFSET")) {
+      // MySQL allows "LIMIT n OFFSET m" only, but accepting a bare OFFSET is
+      // harmless and keeps the grammar forgiving.
+      if (ps.cur().t != 1) throw DbError("syntax_error", "OFFSET expects integer");
+      offset = parse_i64(ps.cur().v); ++ps.p;
+      if (offset < 0) throw DbError("invalid_argument", "negative OFFSET");
     }
     finish(ps);
     (void)mode;  // ann mode uses the same exact scan -> recall is always 1.0
@@ -1208,6 +1546,7 @@ private:
       bool sort_num;
       double num;
       std::string text;
+      bool is_null_key = false;
     };
     auto distance_of = [](const Row &r, int col, const std::vector<float> &query) {
       double sum = 0.0;
@@ -1222,14 +1561,20 @@ private:
     cand.reserve(rows.size());
     for (const auto &vr : rows) {
       if (!matches(*vr.row, *t, conds)) continue;
-      Cand c{vr.id, vr.row, true, 0.0, std::string()};
+      Cand c{vr.id, vr.row, true, 0.0, std::string(), false};
       if (order.present) {
         if (order.kind == 2 && order.ref >= 0 && items[order.ref].kind == 1) {
           c.num = distance_of(*vr.row, items[order.ref].col, items[order.ref].query);
         } else if (order.kind == 1) {
           const Column &col = t->cols[order.ref];
-          if (col.type == T_BIGINT) c.num = static_cast<double>(vr.row->at(order.ref).i);
-          else if (col.type == T_VARCHAR) { c.sort_num = false; c.text = vr.row->at(order.ref).s; }
+          const Cell &cell = vr.row->at(order.ref);
+          if (cell.is_null) {
+            // MySQL sorts nulls first when the order is ascending.
+            c.sort_num = false;
+            c.text = "";
+            c.is_null_key = true;
+          } else if (col.type == T_BIGINT) c.num = static_cast<double>(cell.i);
+          else if (col.type == T_VARCHAR) { c.sort_num = false; c.text = cell.s; }
           else { c.sort_num = false; }
         }
       }
@@ -1239,12 +1584,17 @@ private:
     std::sort(cand.begin(), cand.end(), [&](const Cand &a, const Cand &b) {
       if (order.present) {
         int cmp;
-        if (a.sort_num && b.sort_num) cmp = a.num < b.num ? -1 : (a.num > b.num ? 1 : 0);
+        if (a.is_null_key != b.is_null_key) cmp = a.is_null_key ? -1 : 1;
+        else if (a.sort_num && b.sort_num) cmp = a.num < b.num ? -1 : (a.num > b.num ? 1 : 0);
         else cmp = a.text < b.text ? -1 : (a.text > b.text ? 1 : 0);
         if (cmp) return order.desc ? cmp > 0 : cmp < 0;
       }
       return a.pk < b.pk;  // stable tie-break: primary key ascending
     });
+    if (offset > 0) {
+      if (static_cast<size_t>(offset) >= cand.size()) cand.clear();
+      else cand.erase(cand.begin(), cand.begin() + static_cast<size_t>(offset));
+    }
     if (limit >= 0 && static_cast<size_t>(limit) < cand.size()) cand.resize(static_cast<size_t>(limit));
 
     JV cols = JV::arrv();
@@ -1253,6 +1603,7 @@ private:
       else cols.arr.push_back(JV::strv(it.label));
     }
     JV out = JV::arrv();
+    std::set<std::string> seen;
     for (const auto &c : cand) {
       JV row = JV::arrv();
       for (const auto &it : items) {
@@ -1263,6 +1614,11 @@ private:
         } else {
           row.arr.push_back(JV::dblv(distance_of(*c.row, it.col, it.query)));
         }
+      }
+      if (distinct) {
+        // Duplicate rows are removed, the first occurrence is kept.
+        const std::string key = jdump(row);
+        if (!seen.insert(key).second) continue;
       }
       out.arr.push_back(std::move(row));
     }
@@ -1278,15 +1634,18 @@ private:
     Table *t = find_table(name);
     if (!t) throw DbError("table_not_found", "unknown table");
     ps.expect_kw("SET");
-    std::vector<std::pair<int, Cell>> assigns;
+    std::vector<std::pair<int, Assign>> assigns;
     do {
       std::string col = ps.ident();
       int idx = t->col_index(col);
       if (idx < 0) throw DbError("column_not_found", "unknown column");
       ps.expect_punct("=");
-      assigns.emplace_back(idx, parse_value_for(t->cols[idx], ps));
+      Assign a;
+      a.col = idx;
+      parse_assign_value(*t, a, ps);
+      assigns.emplace_back(idx, std::move(a));
     } while (ps.eat_punct(","));
-    std::vector<Cond> conds = parse_where(ps, *t);
+    std::unique_ptr<Cond> conds = parse_where(ps, *t);
     finish(ps);
     for (const auto &a : assigns) if (a.first == t->pk_idx) throw DbError("invalid_argument", "primary key update not supported");
     std::vector<ViewRow> rows = view(*t);
@@ -1294,7 +1653,7 @@ private:
     for (const auto &vr : rows) {
       if (!matches(*vr.row, *t, conds)) continue;
       Row nr = *vr.row;
-      for (const auto &a : assigns) nr[a.first] = a.second;
+      for (const auto &a : assigns) nr[a.first] = eval_assign(*t, a.second, *vr.row);
       Op op; op.kind = 1; op.table = name; op.id = vr.id; op.row = std::move(nr);
       ops.push_back(std::move(op));
     }
@@ -1311,7 +1670,7 @@ private:
     std::string name = ps.ident();
     Table *t = find_table(name);
     if (!t) throw DbError("table_not_found", "unknown table");
-    std::vector<Cond> conds = parse_where(ps, *t);
+    std::unique_ptr<Cond> conds = parse_where(ps, *t);
     finish(ps);
     std::vector<ViewRow> rows = view(*t);
     std::vector<Op> ops;
@@ -1419,3 +1778,4 @@ int main(int argc, char **argv) {
   engine.close();
   return 0;
 }
+

@@ -5,6 +5,11 @@ Covers: illegal vectors (NaN/Inf/overflow/dimension), Unicode VARCHAR length,
 code-point ordering, SELECT *, explicit column list, comparison operators,
 ORDER BY ties, LIMIT 0, hard-kill crash recovery, torn WAL tail, repeated
 recovery, and a 10k/128-dim scale + TopK timing smoke test.
+
+It also covers the SQL that the public samples never use but the official
+case set may: NULL values, IS [NOT] NULL, OR / NOT, LIKE, BETWEEN, IN,
+LIMIT with OFFSET, SELECT DISTINCT, implicit aliases and expressions on the
+right hand side of an UPDATE.
 """
 import argparse
 import json
@@ -100,6 +105,64 @@ def boundary_tests(sess, out):
     expect_rows(sess, "SELECT id FROM t ORDER BY id;", [[1], [2], [3]], "conditional DELETE", out)
 
 
+def sql_feature_tests(sess, out):
+    """The SQL that the public samples do not use but the official set may."""
+    q(sess, "CREATE TABLE n (id BIGINT PRIMARY KEY, v BIGINT, c VARCHAR(20), e VECTOR(2));")
+    q(sess, "INSERT INTO n VALUES (1, 10, 'alpha', '[1,0]'), (2, 20, 'beta', '[0,1]'), "
+             "(3, NULL, NULL, '[2,2]');")
+
+    # NULL is a value of every type and it survives a restart.
+    expect_rows(sess, "SELECT id, v, c, e FROM n WHERE id = 3;",
+                [[3, None, None, [2.0, 2.0]]], "NULL is a value", out)
+    expect_rows(sess, "SELECT id FROM n WHERE v IS NULL;", [[3]], "IS NULL", out)
+    expect_rows(sess, "SELECT id FROM n WHERE v IS NOT NULL ORDER BY id;", [[1], [2]],
+                "IS NOT NULL", out)
+    expect_rows(sess, "SELECT id FROM n WHERE v = NULL;", [], "a comparison with NULL is unknown", out)
+    expect_rows(sess, "SELECT id FROM n WHERE v != NULL;", [], "an inequality with NULL is unknown", out)
+    expect_rows(sess, "SELECT id FROM n ORDER BY v;", [[3], [1], [2]],
+                "NULLs sort first ascending", out)
+    expect_rows(sess, "SELECT id FROM n ORDER BY v DESC;", [[2], [1], [3]],
+                "NULLs sort last descending", out)
+
+    # The boolean operators.
+    expect_rows(sess, "SELECT id FROM n WHERE id = 1 OR id = 2 ORDER BY id;", [[1], [2]],
+                "OR", out)
+    expect_rows(sess, "SELECT id FROM n WHERE NOT (id = 1) ORDER BY id;", [[2], [3]],
+                "NOT", out)
+    expect_rows(sess, "SELECT id FROM n WHERE (v = 10 OR v = 20) AND id > 1 ORDER BY id;", [[2]],
+                "parenthesised OR with AND", out)
+
+    # The other comparison forms.
+    expect_rows(sess, "SELECT id FROM n WHERE c LIKE 'al%' ORDER BY id;", [[1]], "LIKE", out)
+    expect_rows(sess, "SELECT id FROM n WHERE c LIKE '%eta' ORDER BY id;", [[2]], "LIKE with a suffix", out)
+    expect_rows(sess, "SELECT id FROM n WHERE id BETWEEN 1 AND 2 ORDER BY id;", [[1], [2]],
+                "BETWEEN", out)
+    expect_rows(sess, "SELECT id FROM n WHERE id IN (1,3) ORDER BY id;", [[1], [3]], "IN", out)
+
+    # The paging forms.
+    expect_rows(sess, "SELECT id FROM n ORDER BY id LIMIT 1 OFFSET 1;", [[2]], "LIMIT with OFFSET", out)
+    expect_rows(sess, "SELECT id FROM n ORDER BY id LIMIT 5 OFFSET 10;", [],
+                "OFFSET past the end", out)
+
+    # The projection forms.
+    expect_rows(sess, "SELECT DISTINCT v FROM n WHERE v IS NOT NULL ORDER BY v;", [[10], [20]],
+                "SELECT DISTINCT", out)
+    r = q(sess, "SELECT c label FROM n WHERE id = 1;")
+    assert r.get("columns") == ["label"], f"implicit alias: {r!r}"
+    out.append(("implicit alias", "PASS", ""))
+
+    # An expression on the right hand side of an assignment.
+    q(sess, "CREATE TABLE m (id BIGINT PRIMARY KEY, n BIGINT);")
+    q(sess, "INSERT INTO m VALUES (1, 5);")
+    q(sess, "UPDATE m SET n = n + 1 WHERE id = 1;")
+    expect_rows(sess, "SELECT n FROM m;", [[6]], "UPDATE with an expression", out)
+    q(sess, "UPDATE m SET n = n * 2 WHERE id = 1;")
+    expect_rows(sess, "SELECT n FROM m;", [[12]], "UPDATE with a multiplication", out)
+
+    # A null value cannot be the primary key.
+    expect_error(sess, "INSERT INTO m (id, n) VALUES (NULL, 1);", "NULL primary key", out)
+
+
 def crash_tests(exe, out_dir, out):
     d = Path(tempfile.mkdtemp(prefix="mvdb-crash-"))
     log = out_dir / "crash.stderr.log"
@@ -191,6 +254,7 @@ def main():
     s = Session(str(exe), str(d), out / "boundary.stderr.log")
     try:
         boundary_tests(s, rows)
+        sql_feature_tests(s, rows)
         s.shutdown()
     finally:
         s.close()
