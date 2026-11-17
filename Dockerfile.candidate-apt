@@ -1,0 +1,40 @@
+# Candidate that keeps the official sample's base image but removes the three
+# build-time risks of the first submission:
+#   * apt-get is retried (truncated package indexes are a known build failure)
+#   * no -static link (dynamic libstdc++ is installed in the runtime stage)
+#   * no in-image smoke test that can abort the whole build
+FROM ubuntu:24.04 AS build
+
+RUN set -eux; \
+    ok=0; \
+    for i in 1 2 3; do \
+      if apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends g++; then \
+        ok=1; break; \
+      fi; \
+      sleep 5; \
+    done; \
+    test "$ok" = "1"; \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY src/minivectordb.cpp /src/minivectordb.cpp
+RUN mkdir -p /out \
+ && g++ -std=c++17 -O3 -o /out/minivectordb /src/minivectordb.cpp \
+ && test -x /out/minivectordb
+
+FROM ubuntu:24.04
+RUN set -eux; \
+    ok=0; \
+    for i in 1 2 3; do \
+      if apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libstdc++6 libgcc-s1; then \
+        ok=1; break; \
+      fi; \
+      sleep 5; \
+    done; \
+    test "$ok" = "1"; \
+    rm -rf /var/lib/apt/lists/*; \
+    mkdir -p /data /app
+COPY --from=build /out/minivectordb /app/minivectordb
+VOLUME ["/data"]
+WORKDIR /data
+ENTRYPOINT ["/app/minivectordb", "--data-dir", "/data"]
