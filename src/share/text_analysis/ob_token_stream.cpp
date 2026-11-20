@@ -295,7 +295,29 @@ int ObBasicEnglishNormalizer::get_next(ObDatum &next_token, int64_t &token_freq)
     } else {
       ObString norm_alnum_token(norm_token_len, norm_token_ptr);
       ObString norm_lower_token;
-      if (OB_FAIL(ObCharset::tolower(cs_, norm_alnum_token, norm_lower_token, norm_allocator_))) {
+      // 小写化是 BENG 分词每 token 一次的开销：ObCharset::tolower 要先按
+      // casedn_multiply 申请一块内存，再逐字符做一次 Unicode 大小写映射。
+      // 当 token 只含 ASCII 且不含大写字母时，任何 utf8mb4 排序规则的小写化
+      // 都不会改动任何一个字节（连会把 'I' 映射成非 ASCII 的规则也只影响大写
+      // 字母），这里直接拷贝一份到 arena 即可，产出的 token 字节与原实现完全一致。
+      bool need_casedown = false;
+      for (int64_t i = 0; i < norm_alnum_token.length(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(norm_alnum_token.ptr()[i]);
+        if (OB_UNLIKELY(c >= 0x80 || (c >= 'A' && c <= 'Z'))) {
+          need_casedown = true;
+          break;
+        }
+      }
+      if (!need_casedown) {
+        char *lower_buf = static_cast<char *>(norm_allocator_.alloc(norm_alnum_token.length()));
+        if (OB_ISNULL(lower_buf)) {
+          ret = OB_ALLOCATE_MEMORY_FAILED;
+        } else {
+          MEMCPY(lower_buf, norm_alnum_token.ptr(), norm_alnum_token.length());
+          norm_lower_token = ObString(norm_alnum_token.length(), lower_buf);
+          next_token.set_string(norm_lower_token);
+        }
+      } else if (OB_FAIL(ObCharset::tolower(cs_, norm_alnum_token, norm_lower_token, norm_allocator_))) {
       } else {
         next_token.set_string(norm_lower_token);
       }

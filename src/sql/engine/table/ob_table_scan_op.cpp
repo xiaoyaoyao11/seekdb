@@ -61,6 +61,49 @@ bool find_skip_delta_buffer_in_ctdef(const ObDASBaseCtDef *ctdef)
   }
   return found;
 }
+
+// 在 attach 树里定位全文检索用的 IR scan。
+//
+// IR scan 在 attach 树里的位置有三种情况：
+// 1) 不需要回表：树根就是 IR scan；
+// 2) 需要回表（取表里的其它列）：树根是 IR_AUX_LOOKUP，IR scan 在树内部；
+// 3) ES match / func lookup：IR scan 只是其中一路，由上层合并后再交给用户。
+//
+// 因此只看树根的 op_type 会漏掉情况 2（也就是最常见的 "SELECT id FROM t WHERE
+// MATCH(...) LIMIT n"），而情况 3 又不能把限额下推到单个 IR scan 上——那样会
+// 少返回行（限额必须作用在合并之后的结果上）。
+//
+// 另外路径上出现 SORT 时，检索层的输出顺序与最终结果顺序不同（按相关度排序），
+// 限额不能下推到检索层，否则返回的行集合会变。
+//
+// ir_scan_cnt 统计整棵树里 IR scan 的个数；只有恰好一个时才允许下推限额。
+int find_fts_ir_scan(const ObDASBaseCtDef *ctdef,
+                     ObDASBaseRtDef *rtdef,
+                     int64_t &ir_scan_cnt,
+                     const ObDASIRScanCtDef *&ir_ctdef,
+                     ObDASIRScanRtDef *&ir_rtdef)
+{
+  int ret = OB_SUCCESS;
+  if (OB_ISNULL(ctdef) || OB_ISNULL(rtdef)) {
+    // nothing to do
+  } else if (DAS_OP_SORT == ctdef->op_type_) {
+    // 排序之下不下推限额
+  } else if (DAS_OP_IR_SCAN == ctdef->op_type_) {
+    ++ir_scan_cnt;
+    ir_ctdef = static_cast<const ObDASIRScanCtDef *>(ctdef);
+    ir_rtdef = static_cast<ObDASIRScanRtDef *>(rtdef);
+  } else if (ctdef->children_cnt_ <= rtdef->children_cnt_) {
+    for (int i = 0; OB_SUCC(ret) && i < ctdef->children_cnt_; ++i) {
+      if (OB_FAIL(find_fts_ir_scan(ctdef->children_[i],
+                                   rtdef->children_[i],
+                                   ir_scan_cnt,
+                                   ir_ctdef,
+                                   ir_rtdef))) {
+      }
+    }
+  }
+  return ret;
+}
 }  // anonymous namespace
 
 int SnapshotScanItem::set_snapshot_query_info(ObEvalCtx &eval_ctx, ObDASScanRtDef &scan_rtdef) const
@@ -799,71 +842,92 @@ int ObTableScanOp::attach_related_taskinfo(ObDASScanOp &target_op, ObDASBaseRtDe
 int ObTableScanOp::prepare_pushdown_limit_param()
 {
   int ret = OB_SUCCESS;
+  // 全文索引检索：limit 只下推到检索层（retrieval iter），不下推到 storage。
+  //
+  // 检索层的 DAAT 迭代器本身就支持按 limit 提前结束（ObSRDaaTIterImpl::cache_result
+  // 在累计输出行数达到 limit 时返回 OB_ITER_END），而计数只统计通过了 match filter
+  // 的行，所以提前结束不改变最终返回的行集合，只是省掉了剩余的倒排扫描与相关度计算。
+  //
+  // 注意这里不能把 limit 写回 tsc_rtdef_.scan_rtdef_.limit_param_：普通全文检索路径下
+  // 该对象与 ir_rtdef->get_inv_idx_scan_rtdef() 是同一个，DAS 层会把它复制成 storage 的
+  // 扫描参数，storage 会用它截断倒排 posting list，导致命中数不足（语义错误）。
+  // 因此走独立的 retrieval_limit_param_ 通道。
+  bool is_fts_retrieval = false;
   if (!limit_param_.is_valid()) {
     //ignore, do nothing
-  } else if (!MY_SPEC.batch_scan_flag_
-             && nullptr != tsc_rtdef_.attach_rtinfo_
-             && nullptr != tsc_rtdef_.attach_rtinfo_->attach_rtdef_
-             && DAS_OP_IR_SCAN == tsc_rtdef_.attach_rtinfo_->attach_rtdef_->op_type_
-             && nullptr != MY_CTDEF.attach_spec_.attach_ctdef_
-             && DAS_OP_IR_SCAN == MY_CTDEF.attach_spec_.attach_ctdef_->op_type_
-             // IR scan 上带检索文本才是真正的全文检索；func lookup / es match 复用
-             // IR scan 但没有检索文本，这里排除掉。
-             && nullptr != static_cast<const ObDASIRScanCtDef *>(
-                             MY_CTDEF.attach_spec_.attach_ctdef_)->search_text_) {
-    // 全文索引检索：limit 只下推到检索层（retrieval iter），不下推到 storage。
-    //
-    // 检索层的 DAAT 迭代器本身就支持按 limit 提前结束（ObSRDaaTIterImpl::get_next_rows
-    // 在 output_row_cnt_ 达到 limit 时返回 OB_ITER_END），而 output_row_cnt_ 只统计通过了
-    // match filter 的行，所以提前结束不改变最终返回的行集合，只是省掉了剩余的倒排扫描
-    // 与相关度计算。
-    //
-    // 注意这里不能把 limit 写回 tsc_rtdef_.scan_rtdef_.limit_param_：普通全文检索路径下
-    // 该对象与 ir_rtdef->get_inv_idx_scan_rtdef() 是同一个，DAS 层会把它复制成 storage 的
-    // 扫描参数，storage 会用它截断倒排 posting list，导致命中数不足（语义错误）。
-    // 因此走独立的 retrieval_limit_param_ 通道。
-    need_final_limit_ = true;
-    ObDASIRScanRtDef *ir_rtdef =
-        static_cast<ObDASIRScanRtDef *>(tsc_rtdef_.attach_rtinfo_->attach_rtdef_);
-    // 检索层需要产出 offset+limit 行，TSC 层随后再跳过 offset 行
-    // （见 inner_get_next_row 中 need_final_limit_ 的处理），否则 offset 会被扣减两次。
-    ir_rtdef->retrieval_limit_param_.offset_ = 0;
-    ir_rtdef->retrieval_limit_param_.limit_ = limit_param_.limit_ + limit_param_.offset_;
-    tsc_rtdef_.scan_rtdef_.limit_param_.offset_ = 0;
-    tsc_rtdef_.scan_rtdef_.limit_param_.limit_ = -1;
-
-    if (nullptr != MY_CTDEF.lookup_ctdef_) {
-      OB_ASSERT(nullptr != tsc_rtdef_.lookup_rtdef_);
-      tsc_rtdef_.lookup_rtdef_->limit_param_.offset_ = 0;
-      tsc_rtdef_.lookup_rtdef_->limit_param_.limit_  = -1;
+  } else {
+    const ObDASBaseCtDef *attach_ctdef = MY_CTDEF.attach_spec_.attach_ctdef_;
+    ObDASBaseRtDef *attach_rtdef =
+        (nullptr != tsc_rtdef_.attach_rtinfo_) ? tsc_rtdef_.attach_rtinfo_->attach_rtdef_ : nullptr;
+    if (!MY_SPEC.batch_scan_flag_
+        && nullptr != attach_ctdef
+        && nullptr != attach_rtdef
+        // 树根是 IR scan（不回表）或 IR_AUX_LOOKUP（回表）时才可能是纯全文检索；
+        // ES match / func lookup / index merge 的树根分别是 IR_ES_MATCH /
+        // INDEX_PROJ_LOOKUP / INDEX_MERGE，限额不能作用在其中某一路上。
+        && (DAS_OP_IR_SCAN == attach_ctdef->op_type_
+            || DAS_OP_IR_AUX_LOOKUP == attach_ctdef->op_type_)) {
+      int64_t ir_scan_cnt = 0;
+      const ObDASIRScanCtDef *ir_ctdef = nullptr;
+      ObDASIRScanRtDef *ir_rtdef = nullptr;
+      if (OB_SUCC(find_fts_ir_scan(attach_ctdef,
+                                   attach_rtdef,
+                                   ir_scan_cnt,
+                                   ir_ctdef,
+                                   ir_rtdef))
+          // 整棵树里恰好一个 IR scan，限额才可以作用在检索层
+          && 1 == ir_scan_cnt
+          && nullptr != ir_ctdef
+          && nullptr != ir_rtdef
+          // IR scan 上带检索文本才是真正的全文检索
+          && nullptr != ir_ctdef->search_text_
+          // topk 是另一条限额通道，不能与这里的限额叠加
+          && nullptr == ir_ctdef->topk_limit_expr_) {
+        // 检索层需要产出 offset+limit 行，TSC 层随后再跳过 offset 行
+        // （见 inner_get_next_row 中 need_final_limit_ 的处理），否则 offset 会被扣减两次。
+        ir_rtdef->retrieval_limit_param_.offset_ = 0;
+        ir_rtdef->retrieval_limit_param_.limit_ = limit_param_.limit_ + limit_param_.offset_;
+        is_fts_retrieval = true;
+      }
     }
-  } else if (MY_SPEC.batch_scan_flag_ || nullptr != tsc_rtdef_.attach_rtinfo_) {
-    //batch scan can not pushdown limit param to storage
-    // do final limit for TSC op with attached ops for now
-    need_final_limit_ = true;
-    tsc_rtdef_.scan_rtdef_.limit_param_.offset_ = 0;
-    tsc_rtdef_.scan_rtdef_.limit_param_.limit_ = -1;
+    if (is_fts_retrieval) {
+      need_final_limit_ = true;
+      tsc_rtdef_.scan_rtdef_.limit_param_.offset_ = 0;
+      tsc_rtdef_.scan_rtdef_.limit_param_.limit_ = -1;
 
-    if (nullptr != MY_CTDEF.lookup_ctdef_) {
-      OB_ASSERT(nullptr != tsc_rtdef_.lookup_rtdef_);
-      tsc_rtdef_.lookup_rtdef_->limit_param_.offset_ = 0;
-      tsc_rtdef_.lookup_rtdef_->limit_param_.limit_  = -1;
+      if (nullptr != MY_CTDEF.lookup_ctdef_) {
+        OB_ASSERT(nullptr != tsc_rtdef_.lookup_rtdef_);
+        tsc_rtdef_.lookup_rtdef_->limit_param_.offset_ = 0;
+        tsc_rtdef_.lookup_rtdef_->limit_param_.limit_  = -1;
+      }
+    } else if (MY_SPEC.batch_scan_flag_ || nullptr != tsc_rtdef_.attach_rtinfo_) {
+      //batch scan can not pushdown limit param to storage
+      // do final limit for TSC op with attached ops for now
+      need_final_limit_ = true;
+      tsc_rtdef_.scan_rtdef_.limit_param_.offset_ = 0;
+      tsc_rtdef_.scan_rtdef_.limit_param_.limit_ = -1;
+
+      if (nullptr != MY_CTDEF.lookup_ctdef_) {
+        OB_ASSERT(nullptr != tsc_rtdef_.lookup_rtdef_);
+        tsc_rtdef_.lookup_rtdef_->limit_param_.offset_ = 0;
+        tsc_rtdef_.lookup_rtdef_->limit_param_.limit_  = -1;
+      }
+    } else if (tsc_rtdef_.has_lookup_limit() || (OB_NOT_NULL(scan_iter_) && scan_iter_->get_das_task_cnt() > 1)) {
+      //for index back, need to final limit output rows in TableScan operator,
+      //please see me for the reason: 
+      /* for multi-partition scanning, */
+      /* the limit operation pushed down to the partition TSC needs to be adjusted */
+      /* its rule: */
+      /*                TSC(limit m, n) */
+      /*                   /      \ */
+      /*                  /        \ */
+      /*          DAS Scan(p0)    DAS Scan(p1) */
+      /*        (p0, limit m+n)  (p1, limit m+n) */
+      /* each partition scans limit m+n rows of data, */
+      /* and TSC operator selects the offset (m) limit (n) rows in the final result */
+      need_final_limit_ = true;
+      tsc_rtdef_.prepare_multi_part_limit_param();
     }
-  } else if (tsc_rtdef_.has_lookup_limit() || (OB_NOT_NULL(scan_iter_) && scan_iter_->get_das_task_cnt() > 1)) {
-    //for index back, need to final limit output rows in TableScan operator,
-    //please see me for the reason: 
-    /* for multi-partition scanning, */
-    /* the limit operation pushed down to the partition TSC needs to be adjusted */
-    /* its rule: */
-    /*                TSC(limit m, n) */
-    /*                   /      \ */
-    /*                  /        \ */
-    /*          DAS Scan(p0)    DAS Scan(p1) */
-    /*        (p0, limit m+n)  (p1, limit m+n) */
-    /* each partition scans limit m+n rows of data, */
-    /* and TSC operator selects the offset (m) limit (n) rows in the final result */
-    need_final_limit_ = true;
-    tsc_rtdef_.prepare_multi_part_limit_param();
   }
 
   // NOTICE: TSC operator can not apply final limit when das need keep ordering for multi partitions,

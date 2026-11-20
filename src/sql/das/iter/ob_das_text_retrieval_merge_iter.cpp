@@ -137,8 +137,8 @@ int ObDASTextRetrievalMergeIter::rescan()
     next_written_idx_ = 0;
     // 检索层的限额走独立通道 retrieval_limit_param_（见 ObDASIRScanRtDef 的说明）：
     // 它只作用于检索迭代器的早停，不会下推到 storage 去截断倒排 posting list。
-    limit_param_ = (nullptr != ir_ctdef_->search_text_
-                    && ir_rtdef_->retrieval_limit_param_.is_valid())
+    // 未设置时该字段保持默认的无效值（limit_ = -1），检索行为与原来完全一致。
+    limit_param_ = (nullptr != ir_ctdef_->search_text_)
                    ? ir_rtdef_->retrieval_limit_param_
                    : ir_rtdef_->get_inv_idx_scan_rtdef()->limit_param_;
   }
@@ -353,8 +353,8 @@ int ObDASTextRetrievalMergeIter::inner_init(ObDASIterParam &param)
       } else {
         // 检索层的限额走独立通道 retrieval_limit_param_（见 ObDASIRScanRtDef 的说明）：
         // 它只作用于检索迭代器的早停，不会下推到 storage 去截断倒排 posting list。
-        limit_param_ = (nullptr != ir_ctdef_->search_text_
-                        && ir_rtdef_->retrieval_limit_param_.is_valid())
+        // 未设置时该字段保持默认的无效值（limit_ = -1），检索行为与原来完全一致。
+        limit_param_ = (nullptr != ir_ctdef_->search_text_)
                        ? ir_rtdef_->retrieval_limit_param_
                        : ir_rtdef_->get_inv_idx_scan_rtdef()->limit_param_;
       }

@@ -377,11 +377,13 @@ int ObDASLegacyTRMergeIter::create_sparse_retrieval_iter()
   sr_iter_param_.dim_weights_ = dim_weights_.count() >= 1 ? &dim_weights_ : nullptr;
   // 检索层的限额走独立通道 retrieval_limit_param_：它由 TSC 层在执行时于本地设置，
   // 只作用于检索迭代器的早停，不会下推到 storage，因此不会截断倒排 posting list。
-  // 只有真正的全文检索（IR scan 上带检索文本）且该限额有效时才启用；
-  // 其余情况沿用原来的取值（storage 扫描参数，恒为无效值），行为不变。
+  // 注意这里必须绑定 IR scan rtdef 上的运行期字段：inv idx scan rtdef 的 limit_param_
+  // 会被 DAS 层复制成 storage 的扫描参数（storage 用它截断倒排 posting list，会导致
+  // 命中数不足），不能拿来当检索层的限额。
+  // 这里取的是指针，限额的值在迭代时才读，因此只要 TSC 层设置过就一定生效。
   const common::ObLimitParam *retrieval_limit_param =
       &ir_rtdef_->get_inv_idx_scan_rtdef()->limit_param_;
-  if (nullptr != ir_ctdef_->search_text_ && ir_rtdef_->retrieval_limit_param_.is_valid()) {
+  if (nullptr != ir_ctdef_->search_text_) {
     retrieval_limit_param = &ir_rtdef_->retrieval_limit_param_;
   }
   sr_iter_param_.limit_param_ = retrieval_limit_param;

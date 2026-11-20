@@ -17,6 +17,7 @@
 #include "storage/fts/dict/ob_ft_range_dict.h"
 #include "share/rc/ob_server_runtime.h"
 
+#include <cstring>
 #include "storage/fts/dict/ob_ik_dic.h"
 #include "lib/allocator/page_arena.h"
 #include "lib/charset/ob_charset.h"
@@ -43,6 +44,32 @@ namespace oceanbase
 {
 namespace storage
 {
+namespace
+{
+// 与 ObCharset::strcmp(CS_TYPE_UTF8MB4_BIN, lhs, rhs) 逐位等价的比较。
+//
+// utf8mb4_bin 的排序规则本身就是 ob_strnncoll_mb_bin（src/oblib/lib/charset/
+// ob_ctype_mb.cc）：先 memcmp 公共前缀，公共前缀相等时按长度比较（t_is_prefix 为
+// false，结果是 slen - tlen）；ObCharset::strcmp 在参数非空时只是额外补了两个空串特判。
+//
+// 词典区间查找是分词热路径的主要开销之一：一次二分要做 3~4 次比较，每次都要走
+// "ObCharset::strcmp -> is_argument_valid -> get_charset -> 间接调用 strnncoll"
+// 的完整调用链，而规则本身只是一次 memcmp。这里把等价比较内联掉，行为完全不变。
+static inline int ft_bin_strcmp(const ObString &lhs, const ObString &rhs)
+{
+  int cmp = 0;
+  if (lhs.empty()) {
+    cmp = rhs.empty() ? 0 : -1;
+  } else if (rhs.empty()) {
+    cmp = 1;
+  } else {
+    const int64_t len = OB_MIN(lhs.length(), rhs.length());
+    const int mem_ret = memcmp(lhs.ptr(), rhs.ptr(), len);
+    cmp = (0 != mem_ret) ? mem_ret : static_cast<int>(lhs.length() - rhs.length());
+  }
+  return cmp;
+}
+} // namespace
 
 
 int ObFTRangeDict::build_cache_from_ik_dict(const ObFTDictDesc &desc, ObFTCacheRangeContainer &range_container)
@@ -391,9 +418,7 @@ int ObFTRangeDict::find_first_char_range(const ObString &single_word, ObIFTDict 
   int64_t found = -1;
   while (low <= high) {
     int64_t mid = low + (high - low) / 2;
-    if (ObCharset::strcmp(ObCollationType::CS_TYPE_UTF8MB4_BIN,
-                          range_dicts_[mid].start_.get_word(),
-                          single_word) <= 0) {
+    if (ft_bin_strcmp(range_dicts_[mid].start_.get_word(), single_word) <= 0) {
       found = mid;
       low = mid + 1;
     } else {
@@ -403,9 +428,7 @@ int ObFTRangeDict::find_first_char_range(const ObString &single_word, ObIFTDict 
   if (found < 0) {
     // 小于第一个区间，不命中
     ret = OB_ENTRY_NOT_EXIST;
-  } else if (ObCharset::strcmp(ObCollationType::CS_TYPE_UTF8MB4_BIN,
-                               range_dicts_[found].end_.get_word(),
-                               single_word) >= 0) {
+  } else if (ft_bin_strcmp(range_dicts_[found].end_.get_word(), single_word) >= 0) {
     dict = range_dicts_[found].dict_;
   } else {
     // 落在两个区间之间的空隙里，不命中任何区间
