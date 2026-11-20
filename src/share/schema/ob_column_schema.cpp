@@ -229,12 +229,13 @@ int ObColumnSchemaV2::set_ai_column_meta(const common::ObString &expr,
         MEMCPY(buf + head_len, expr.ptr(), expr.length());
       }
       // extended_type_info_ is already used by collection columns (VECTOR(...)),
-      // so the descriptor is only appended for scalar columns. VECTOR AI columns
-      // keep their expression in memory; persisting it needs a dedicated
-      // __all_column field (tracked as follow-up work).
+      // so VECTOR AI columns keep the descriptor in the comment field instead.
       if (is_collection()) {
-        ai_sync_mode_ = sync_mode;
-        ai_max_retries_ = max_retries;
+        if (OB_FAIL(set_comment(ObString(static_cast<int64_t>(head_len) + expr.length(), buf)))) {
+        } else {
+          ai_sync_mode_ = sync_mode;
+          ai_max_retries_ = max_retries;
+        }
       } else if (OB_FAIL(add_type_info(ObString(static_cast<int64_t>(head_len) + expr.length(), buf)))) {
       } else {
         ai_sync_mode_ = sync_mode;
@@ -252,23 +253,32 @@ int ObColumnSchemaV2::refresh_ai_column_meta()
   int ret = OB_SUCCESS;
   const char *prefix = "ob_ai:";
   const int64_t prefix_len = static_cast<int64_t>(strlen(prefix));
-  for (int64_t i = 0; OB_SUCC(ret) && i < extended_type_info_.count(); ++i) {
-    const ObString &info = extended_type_info_.at(i);
-    if (info.length() > prefix_len && 0 == strncmp(info.ptr(), prefix, prefix_len)) {
-      int sync_mode = 0;
-      int max_retries = 0;
-      const char *sep = NULL;
-      if (2 == sscanf(info.ptr(), "ob_ai:s=%d;r=%d;e=", &sync_mode, &max_retries)
-          && NULL != (sep = strstr(info.ptr(), ";e="))) {
-        sep += 3;  // skip ";e="
-        ObString expr(static_cast<int32_t>(info.length() - (sep - info.ptr())),
-                      const_cast<char *>(sep));
-        if (OB_FAIL(deep_copy_str(expr, ai_column_expr_))) {
-        } else {
-          ai_sync_mode_ = static_cast<int8_t>(sync_mode);
-          ai_max_retries_ = static_cast<int8_t>(max_retries);
-        }
+  auto parse_descriptor = [&](const ObString &info) -> int {
+    int parse_ret = OB_SUCCESS;
+    int sync_mode = 0;
+    int max_retries = 0;
+    const char *sep = NULL;
+    if (info.length() > prefix_len && 0 == strncmp(info.ptr(), prefix, prefix_len)
+        && 2 == sscanf(info.ptr(), "ob_ai:s=%d;r=%d;e=", &sync_mode, &max_retries)
+        && NULL != (sep = strstr(info.ptr(), ";e="))) {
+      sep += 3;  // skip ";e="
+      ObString expr(static_cast<int32_t>(info.length() - (sep - info.ptr())),
+                    const_cast<char *>(sep));
+      if (OB_FAIL(deep_copy_str(expr, ai_column_expr_))) {
+      } else {
+        ai_sync_mode_ = static_cast<int8_t>(sync_mode);
+        ai_max_retries_ = static_cast<int8_t>(max_retries);
       }
+    }
+    return parse_ret;
+  };
+  for (int64_t i = 0; OB_SUCC(ret) && i < extended_type_info_.count(); ++i) {
+    if (OB_FAIL(parse_descriptor(extended_type_info_.at(i)))) {
+    }
+  }
+  if (OB_SUCC(ret) && ai_column_expr_.empty() && !comment_.empty()) {
+    // VECTOR AI columns persist the descriptor in the comment field.
+    if (OB_FAIL(parse_descriptor(comment_))) {
     }
   }
   return ret;

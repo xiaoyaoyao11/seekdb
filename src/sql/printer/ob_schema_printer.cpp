@@ -304,8 +304,14 @@ int ObSchemaPrinter::print_table_definition_columns(const ObTableSchema &table_s
           SHARE_SCHEMA_LOG(WARN, "fail to print lob params", K(ret));
         }
         if (OB_SUCC(ret) && 0 < strlen(col->get_comment())) {
-          if (OB_FAIL(databuff_print_multi_objs(buf, buf_len, pos,
-              " COMMENT '", ObHexEscapeSqlStr(col->get_comment_str()), "'"))) {
+          const ObString &comment = col->get_comment_str();
+          // VECTOR AI columns persist their AI descriptor in the comment field;
+          // do not expose it as a user comment.
+          if (col->is_ai_column() && comment.length() > 6
+              && 0 == strncmp(comment.ptr(), "ob_ai:", 6)) {
+            // skip internal descriptor
+          } else if (OB_FAIL(databuff_print_multi_objs(buf, buf_len, pos,
+              " COMMENT '", ObHexEscapeSqlStr(comment), "'"))) {
           }
         }
         if (OB_SUCC(ret) && col->get_skip_index_attr().has_skip_index()) {
